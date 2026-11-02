@@ -1,0 +1,8 @@
+include NOTICE MIGRATION_SOURCE.json
+graft docs
+graft environment/esmfold2
+graft benchmark/datasets/proteocraft_59_v1
+graft benchmark/script
+graft benchmark/yaml
+graft scripts
+global-exclude __pycache__ *.py[cod] .DS_Store

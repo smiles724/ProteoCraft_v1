@@ -1,0 +1,60 @@
+case_id	task_type	target_name	sequence_file	structure_file	alpha_chain	beta_chain	hotspot_chain	hotspot_start	hotspot_end	target_hotspots	binder_chain	target_chains	scaffold_chains	cdr_motif	binder_length	source_run_id
+denovo_BetV1	denovo	BetV1	denovo/fastas/BetV1.fasta	denovo/templates/BetV1.cif						24					120	bcv1_v2_001
+denovo_DerF21_B10	denovo	DerF21	denovo/fastas/DerF21.fasta	denovo/templates/DerF21.cif						10					120	bcv1_v2_002
+denovo_DerF21_B28	denovo	DerF21	denovo/fastas/DerF21.fasta	denovo/templates/DerF21.cif						28					120	bcv1_v2_003
+denovo_DerF21_B63	denovo	DerF21	denovo/fastas/DerF21.fasta	denovo/templates/DerF21.cif						63					120	bcv1_v2_004
+denovo_DerF21_B81	denovo	DerF21	denovo/fastas/DerF21.fasta	denovo/templates/DerF21.cif						81					120	bcv1_v2_005
+denovo_DerF21_B92	denovo	DerF21	denovo/fastas/DerF21.fasta	denovo/templates/DerF21.cif						92					120	bcv1_v2_006
+denovo_DerF7_B132	denovo	DerF7	denovo/fastas/DerF7.fasta	denovo/templates/DerF7.cif						132					120	bcv1_v2_007
+denovo_DerF7_B178	denovo	DerF7	denovo/fastas/DerF7.fasta	denovo/templates/DerF7.cif						178					120	bcv1_v2_008
+denovo_HER2	denovo	HER2	denovo/fastas/HER2.fasta	denovo/templates/HER2.cif						134,139					120	bcv1_v2_009
+denovo_HER2_B139	denovo	HER2	denovo/fastas/HER2.fasta	denovo/templates/HER2.cif						139					120	bcv1_v2_010
+denovo_IFNAR2	denovo	IFNAR2	denovo/fastas/IFNAR2.fasta	denovo/templates/IFNAR2.cif						45,73,75,77,89,91					120	bcv1_v2_011
+denovo_PD-L1	denovo	PD-L1	denovo/fastas/PD-L1.fasta	denovo/templates/PD-L1.cif						37,39,49,98					120	bcv1_v2_012
+denovo_PD1	denovo	PD1	denovo/fastas/PD1.fasta	denovo/templates/PD1.cif						33,95,98,102					120	bcv1_v2_013
+denovo_SpCas9	denovo	SpCas9	denovo/fastas/SpCas9.fasta	denovo/templates/SpCas9.cif						134					120	bcv1_v2_014
+tcr_1qrn_alpha_53_56_template	tcr	1QRN		tcr/source_pdb/1QRN.pdb	D	E	alpha	53	56						120	task_014
+tcr_1qrn_alpha_63_66_template	tcr	1QRN		tcr/source_pdb/1QRN.pdb	D	E	alpha	63	66						120	task_015
+tcr_1qrn_alpha_72_76_template	tcr	1QRN		tcr/source_pdb/1QRN.pdb	D	E	alpha	72	76						120	task_016
+tcr_1qrn_beta_21_24_template	tcr	1QRN		tcr/source_pdb/1QRN.pdb	D	E	beta	21	24						120	task_017
+tcr_1qrn_beta_5_7_template	tcr	1QRN		tcr/source_pdb/1QRN.pdb	D	E	beta	5	7						120	task_018
+tcr_1qrn_beta_66_69_template	tcr	1QRN		tcr/source_pdb/1QRN.pdb	D	E	beta	66	69						120	task_019
+tcr_1qrn_beta_74_77_template	tcr	1QRN		tcr/source_pdb/1QRN.pdb	D	E	beta	74	77						120	task_020
+tcr_1qrn_no_hotspot	tcr	1QRN		tcr/source_pdb/1QRN.pdb	D	E									120	task_021
+tcr_3qdj_alpha_53_56_custom_loss_hotspot	tcr	3QDJ		tcr/source_pdb/3QDJ.pdb	D	E	alpha	53	56						120	task_022
+tcr_3qdj_alpha_61_64_custom_loss_hotspot	tcr	3QDJ		tcr/source_pdb/3QDJ.pdb	D	E	alpha	61	64						120	task_023
+tcr_3qdj_alpha_70_74_custom_loss_hotspot	tcr	3QDJ		tcr/source_pdb/3QDJ.pdb	D	E	alpha	70	74						120	task_024
+tcr_3qdj_beta_23_27_custom_loss_hotspot	tcr	3QDJ		tcr/source_pdb/3QDJ.pdb	D	E	beta	23	27						120	task_025
+tcr_3qdj_beta_68_69_custom_loss_hotspot	tcr	3QDJ		tcr/source_pdb/3QDJ.pdb	D	E	beta	68	69						120	task_026
+tcr_3qdj_beta_78_80_custom_loss_hotspot	tcr	3QDJ		tcr/source_pdb/3QDJ.pdb	D	E	beta	78	80						120	task_027
+tcr_3qdj_beta_7_10_custom_loss_hotspot	tcr	3QDJ		tcr/source_pdb/3QDJ.pdb	D	E	beta	7	10						120	task_028
+tcr_3qdj_no_hotspot	tcr	3QDJ		tcr/source_pdb/3QDJ.pdb	D	E									120	task_029
+tcr_5bs0_alpha_20_25_custom_loss_hotspot	tcr	5BS0		tcr/source_pdb/5BS0.pdb	D	E	alpha	20	25						120	task_030
+tcr_5bs0_alpha_57_59_custom_loss_hotspot	tcr	5BS0		tcr/source_pdb/5BS0.pdb	D	E	alpha	57	59						120	task_031
+tcr_5bs0_alpha_63_67_custom_loss_hotspot	tcr	5BS0		tcr/source_pdb/5BS0.pdb	D	E	alpha	63	67						120	task_032
+tcr_5bs0_alpha_73_77_custom_loss_hotspot	tcr	5BS0		tcr/source_pdb/5BS0.pdb	D	E	alpha	73	77						120	task_033
+tcr_5bs0_beta_20_24_custom_loss_hotspot	tcr	5BS0		tcr/source_pdb/5BS0.pdb	D	E	beta	20	24						120	task_034
+tcr_5bs0_beta_66_69_custom_loss_hotspot	tcr	5BS0		tcr/source_pdb/5BS0.pdb	D	E	beta	66	69						120	task_035
+tcr_5bs0_beta_75_78_custom_loss_hotspot	tcr	5BS0		tcr/source_pdb/5BS0.pdb	D	E	beta	75	78						120	task_036
+tcr_5bs0_beta_7_8_custom_loss_hotspot	tcr	5BS0		tcr/source_pdb/5BS0.pdb	D	E	beta	7	8						120	task_037
+tcr_5bs0_no_hotspot	tcr	5BS0		tcr/source_pdb/5BS0.pdb	D	E									120	task_038
+tcr_6bj8_alpha_20_24_custom_loss_hotspot	tcr	6BJ8		tcr/source_pdb/6BJ8.pdb	D	H	alpha	20	24						120	task_039
+tcr_6bj8_alpha_64_68_custom_loss_hotspot	tcr	6BJ8		tcr/source_pdb/6BJ8.pdb	D	H	alpha	64	68						120	task_040
+tcr_6bj8_alpha_73_77_custom_loss_hotspot	tcr	6BJ8		tcr/source_pdb/6BJ8.pdb	D	H	alpha	73	77						120	task_041
+tcr_6bj8_beta_20_24_custom_loss_hotspot	tcr	6BJ8		tcr/source_pdb/6BJ8.pdb	D	H	beta	20	24						120	task_042
+tcr_6bj8_beta_4_7_custom_loss_hotspot	tcr	6BJ8		tcr/source_pdb/6BJ8.pdb	D	H	beta	4	7						120	task_043
+tcr_6bj8_beta_65_68_custom_loss_hotspot	tcr	6BJ8		tcr/source_pdb/6BJ8.pdb	D	H	beta	65	68						120	task_044
+tcr_6bj8_beta_73_77_custom_loss_hotspot	tcr	6BJ8		tcr/source_pdb/6BJ8.pdb	D	H	beta	73	77						120	task_045
+tcr_6bj8_no_hotspot	tcr	6BJ8		tcr/source_pdb/6BJ8.pdb	D	H									120	task_046
+tcr_9c3e_alpha_75_77_custom_loss_hotspot	tcr	9C3E		tcr/source_pdb/9C3E.pdb	A	B	alpha	75	77						120	task_047
+tcr_9c3e_alpha_82_85_custom_loss_hotspot	tcr	9C3E		tcr/source_pdb/9C3E.pdb	A	B	alpha	82	85						120	task_048
+tcr_9c3e_alpha_91_94_custom_loss_hotspot	tcr	9C3E		tcr/source_pdb/9C3E.pdb	A	B	alpha	91	94						120	task_049
+tcr_9c3e_beta_24_26_custom_loss_hotspot	tcr	9C3E		tcr/source_pdb/9C3E.pdb	A	B	beta	24	26						120	task_050
+tcr_9c3e_beta_39_43_custom_loss_hotspot	tcr	9C3E		tcr/source_pdb/9C3E.pdb	A	B	beta	39	43						120	task_051
+tcr_9c3e_beta_84_85_custom_loss_hotspot	tcr	9C3E		tcr/source_pdb/9C3E.pdb	A	B	beta	84	85						120	task_052
+tcr_9c3e_beta_92_96_custom_loss_hotspot	tcr	9C3E		tcr/source_pdb/9C3E.pdb	A	B	beta	92	96						120	task_053
+tcr_9c3e_no_hotspot	tcr	9C3E		tcr/source_pdb/9C3E.pdb	A	B									120	task_054
+cdr_9NMW_alpha	cdr_redesign	9NMW	cdr/fastas/rcsb_pdb_9NMW_abtrunc.fasta	cdr/templates/9NMW.cif							D	C	A,E	CAVNNARLMFGDGTQL		cdr_055
+cdr_9NMW_beta	cdr_redesign	9NMW	cdr/fastas/rcsb_pdb_9NMW_abtrunc.fasta	cdr/templates/9NMW.cif							E	C	A,D	CASSVAGSPEAFF		cdr_056
+cdr_1QRN_alpha	cdr_redesign	1QRN	cdr/fastas/rcsb_pdb_1QRN_abtrunc.fasta	cdr/templates/1QRN_fixed_template.cif							D	C	A,E	CAVTTDSWGKLQF		cdr_057
+cdr_1QRN_beta	cdr_redesign	1QRN	cdr/fastas/rcsb_pdb_1QRN_abtrunc.fasta	cdr/templates/1QRN_fixed_template.cif							E	C	A,D	CASRPGLAGGRPEQYF		cdr_058

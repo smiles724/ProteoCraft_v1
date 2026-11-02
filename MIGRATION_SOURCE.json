@@ -1,0 +1,418 @@
+{
+  "source_repository": "https://github.com/smiles724/ProteoCraft",
+  "source_public_main": "60fcbfdca59e54ff40bb209ac1bd3037ffec41aa",
+  "integration_main": "935e1bca4182cc54f9364ef14bd49c8ad9387e2c",
+  "date": "2026-11-02",
+  "files": [
+    {
+      "source": "bindcraft/hallucination/esmfold2_backend.py",
+      "destination": "proteocraft/hallucination/esmfold2_backend.py",
+      "source_sha256": "703f02b9cdc465d6a4e6846b0745a342def4e9e2661c1729d590059916f8342b"
+    },
+    {
+      "source": "bindcraft/hallucination/esmfold2_cdr.py",
+      "destination": "proteocraft/hallucination/esmfold2_cdr.py",
+      "source_sha256": "63e5aa4726b0a9fa24c34c25c882aee6d32928e3109a42ba4c4ae2d03c9d261c"
+    },
+    {
+      "source": "bindcraft/hallucination/esmfold2_interface.py",
+      "destination": "proteocraft/hallucination/esmfold2_interface.py",
+      "source_sha256": "ab7a50a203555c25a4faa817a486a979ee485c07fe03432a15bfbe1fa4fa6d0b"
+    },
+    {
+      "source": "bindcraft/hallucination/esmfold2_memory.py",
+      "destination": "proteocraft/hallucination/esmfold2_memory.py",
+      "source_sha256": "d24903bf9746439577dac50bbfcb54adf7e6bb87173b6661855128c572e1a12f"
+    },
+    {
+      "source": "bindcraft/hallucination/esmfold2_one_step.py",
+      "destination": "proteocraft/hallucination/esmfold2_one_step.py",
+      "source_sha256": "9a416bf1a16e475df97936a9e99bf436b2a587b973e0923e50bfaebeccce22ac"
+    },
+    {
+      "source": "bindcraft/hallucination/esmfold2_optimizations.py",
+      "destination": "proteocraft/hallucination/esmfold2_optimizations.py",
+      "source_sha256": "54c2f43f1c1a4b06860faca92fe6fc65225e0aefd17800129cfe9c5171a3e919"
+    },
+    {
+      "source": "bindcraft/hallucination/esmfold2_pipeline.py",
+      "destination": "proteocraft/hallucination/esmfold2_pipeline.py",
+      "source_sha256": "9f89997d72f75792d5edcd6fe4478e82aa28f523ca895cf1a8d5eac6aaa96579"
+    },
+    {
+      "source": "bindcraft/hallucination/esmfold2_runtime.py",
+      "destination": "proteocraft/hallucination/esmfold2_runtime.py",
+      "source_sha256": "940b98e7b19260ec331d821538d32d48d376770a4002229e9c2d55fd3800a111"
+    },
+    {
+      "source": "bindcraft/hallucination/esmfold2_template.py",
+      "destination": "proteocraft/hallucination/esmfold2_template.py",
+      "source_sha256": "033fcb1b5c5f42a363e8bf89a4ace2debd62730b5a142647f7e56fb01f26dcac"
+    },
+    {
+      "source": "bindcraft/hallucination/esmfold2_vhh.py",
+      "destination": "proteocraft/hallucination/esmfold2_vhh.py",
+      "source_sha256": "0b98a017d87bcf6fb609678cbc21fe34d640cb423f3daf7b8465ddef5c4b50e8"
+    },
+    {
+      "source": "bindcraft/hallucination/mcts_controller.py",
+      "destination": "proteocraft/hallucination/mcts_controller.py",
+      "source_sha256": "0af7f5f2feada724ffaf7e49ef3cc60af7a17c46451680a8e3a9c7ec917b4f5b"
+    },
+    {
+      "source": "bindcraft/hallucination/mcts_legacy.py",
+      "destination": "proteocraft/hallucination/mcts_legacy.py",
+      "source_sha256": "56dd45986fea400ca724b9ad390a20413be1fda43e61dd775d4b82e19df8b687"
+    },
+    {
+      "source": "bindcraft/hallucination/mutation_proposer.py",
+      "destination": "proteocraft/hallucination/mutation_proposer.py",
+      "source_sha256": "7221c7f5e1abf2e28ed6220bac2deed17c30776ae753958bce02f302f409b08e"
+    },
+    {
+      "source": "bindcraft/hallucination/reproducibility.py",
+      "destination": "proteocraft/hallucination/reproducibility.py",
+      "source_sha256": "5bba8df36a805841f3bee6881bf3aeeff7bd2df284a90e3bb0c0fd5a994c9c24"
+    },
+    {
+      "source": "bindcraft/hallucination/profile_loader.py",
+      "destination": "proteocraft/hallucination/profile_loader.py",
+      "source_sha256": "5579159b45ee1258f5667fb8417c43056677b2a5851fe3b20cb020809c5c2d11"
+    },
+    {
+      "source": "bindcraft/losses/geometry.py",
+      "destination": "proteocraft/losses/geometry.py",
+      "source_sha256": "f874f4e8a8e7610697578c39f261b4dd84a01fb79341f7250cf81a24577600a5"
+    },
+    {
+      "source": "configs/proteocraft_profiles/esmfold2_d.yaml",
+      "destination": "proteocraft/configs/proteocraft_profiles/esmfold2_d.yaml",
+      "source_sha256": "956465b61ea73e155a7b7d6bc52f7e0b0783bb30c49cfc3ff26dd5a83d7b83ba"
+    },
+    {
+      "source": "configs/evaluation/esmfold2_official_rescore.yaml",
+      "destination": "proteocraft/configs/evaluation/esmfold2_official_rescore.yaml",
+      "source_sha256": "0bb4ebd28b5cd1023e531d0335d07ac8ff9243b5d409aaeff789ffcde44e9109"
+    },
+    {
+      "source": "benchmark/script/run_esmfold2_59.py",
+      "destination": "benchmark/script/run_esmfold2_59.py",
+      "source_sha256": "a98f5ace2f12b1a48d1c1a8a20403b501c0a9670376ae95ef324c6c3d8497ac6"
+    },
+    {
+      "source": "benchmark/script/run_esmfold2_cdr_redesign.py",
+      "destination": "benchmark/script/run_esmfold2_cdr_redesign.py",
+      "source_sha256": "2e60fcb0a2b9c8ad87ea55969e32fccb920e3da5536c7af0ba05fe212e9f9881"
+    },
+    {
+      "source": "benchmark/script/run_esmfold2_vhh_redesign.py",
+      "destination": "benchmark/script/run_esmfold2_vhh_redesign.py",
+      "source_sha256": "72fb7045c2f49996a6076019bf5c70076f95f3358b7aae712ec664de146a4b87"
+    },
+    {
+      "source": "benchmark/datasets/proteocraft_59_v1/benchmark.yaml",
+      "destination": "benchmark/datasets/proteocraft_59_v1/benchmark.yaml",
+      "source_sha256": "8b21d0e2e74cb189e027c9085b0b93a6810852cf7b187fc04a8bc79aea528fd5"
+    },
+    {
+      "source": "benchmark/datasets/proteocraft_59_v1/manifest.tsv",
+      "destination": "benchmark/datasets/proteocraft_59_v1/manifest.tsv",
+      "source_sha256": "595176224be28b36356b5fc654db2b287ef7c7cc7545f2dd33449bfe28f74cd6"
+    },
+    {
+      "source": "benchmark/datasets/proteocraft_59_v1/README.md",
+      "destination": "benchmark/datasets/proteocraft_59_v1/README.md",
+      "source_sha256": "2ebf4aa623b7429033be18227f70ffbb0f22650c2791b41a4e38505d13cbcaca"
+    },
+    {
+      "source": "benchmark/datasets/proteocraft_59_v1/.gitattributes",
+      "destination": "benchmark/datasets/proteocraft_59_v1/.gitattributes",
+      "source_sha256": "fe8843fd1adb02ceeec04c494b77434ee323d2080a1245bcc52835e7605b6689"
+    },
+    {
+      "source": "benchmark/datasets/proteocraft_59_v1/SHA256SUMS.txt",
+      "destination": "benchmark/datasets/proteocraft_59_v1/SHA256SUMS.txt",
+      "source_sha256": "5741db189e9adfb925bca4d2fa4a585ece5651c06f0f8b529c0689cbb340cb63"
+    },
+    {
+      "source": "benchmark/datasets/proteocraft_59_v1/tcr/source_pdb/9C3E.pdb",
+      "destination": "benchmark/datasets/proteocraft_59_v1/tcr/source_pdb/9C3E.pdb",
+      "source_sha256": "a2e253ef7344eb5e11f739c285fa4b13079e570963390ec0e1bafee01d43f72b"
+    },
+    {
+      "source": "benchmark/datasets/proteocraft_59_v1/tcr/source_pdb/3QDJ.pdb",
+      "destination": "benchmark/datasets/proteocraft_59_v1/tcr/source_pdb/3QDJ.pdb",
+      "source_sha256": "2063e91be95e3dd37076c968ebfd62e9bcc5c17e2a024101816aa9930e77426d"
+    },
+    {
+      "source": "benchmark/datasets/proteocraft_59_v1/tcr/source_pdb/5BS0.pdb",
+      "destination": "benchmark/datasets/proteocraft_59_v1/tcr/source_pdb/5BS0.pdb",
+      "source_sha256": "9094bfd8a29f3ce8c91d4eda2383b264b780f749abab4dc933c898b05e50241b"
+    },
+    {
+      "source": "benchmark/datasets/proteocraft_59_v1/tcr/source_pdb/1QRN.pdb",
+      "destination": "benchmark/datasets/proteocraft_59_v1/tcr/source_pdb/1QRN.pdb",
+      "source_sha256": "f7e20c26cb71b0314d74b6beeec2f8dde799e5caad19ffc3b65dd14ad5b6a002"
+    },
+    {
+      "source": "benchmark/datasets/proteocraft_59_v1/tcr/source_pdb/6BJ8.pdb",
+      "destination": "benchmark/datasets/proteocraft_59_v1/tcr/source_pdb/6BJ8.pdb",
+      "source_sha256": "b2f76d1e3a5530eac293ae8188ddfbce0e284775fbcffa913268cb18326427e0"
+    },
+    {
+      "source": "benchmark/datasets/proteocraft_59_v1/denovo/fastas/PD-L1.fasta",
+      "destination": "benchmark/datasets/proteocraft_59_v1/denovo/fastas/PD-L1.fasta",
+      "source_sha256": "010e58147812de3b460824a06d46f24ad6929b8b159baf399d73b75a308addc3"
+    },
+    {
+      "source": "benchmark/datasets/proteocraft_59_v1/denovo/fastas/DerF21.fasta",
+      "destination": "benchmark/datasets/proteocraft_59_v1/denovo/fastas/DerF21.fasta",
+      "source_sha256": "84189c2be28cac7fa64de72557be03a80a344d3a348f5acd11dd21612c12fa91"
+    },
+    {
+      "source": "benchmark/datasets/proteocraft_59_v1/denovo/fastas/BetV1.fasta",
+      "destination": "benchmark/datasets/proteocraft_59_v1/denovo/fastas/BetV1.fasta",
+      "source_sha256": "88f9d775a276f3f75bdeab20f7af9da44d192f017994b7682a0723d584cc371a"
+    },
+    {
+      "source": "benchmark/datasets/proteocraft_59_v1/denovo/fastas/IFNAR2.fasta",
+      "destination": "benchmark/datasets/proteocraft_59_v1/denovo/fastas/IFNAR2.fasta",
+      "source_sha256": "f25dc7a2ec98673b3811a536b8b90f029e7aed4af6efdbd0c7c162f21ae0b6e9"
+    },
+    {
+      "source": "benchmark/datasets/proteocraft_59_v1/denovo/fastas/DerF7.fasta",
+      "destination": "benchmark/datasets/proteocraft_59_v1/denovo/fastas/DerF7.fasta",
+      "source_sha256": "4f4bf3ad15a4efbdd1c528091c394e8aa1144780dbf2691605907520cebccc70"
+    },
+    {
+      "source": "benchmark/datasets/proteocraft_59_v1/denovo/fastas/PD1.fasta",
+      "destination": "benchmark/datasets/proteocraft_59_v1/denovo/fastas/PD1.fasta",
+      "source_sha256": "268104c58e382d77374ebbcd6e7ffcd8c4ba16146af41ace8b4356cfd8ed24f9"
+    },
+    {
+      "source": "benchmark/datasets/proteocraft_59_v1/denovo/fastas/SpCas9.fasta",
+      "destination": "benchmark/datasets/proteocraft_59_v1/denovo/fastas/SpCas9.fasta",
+      "source_sha256": "74bdbb6ee84c491510a394922929e706b8cfab6c97d9079fc39486c8890beb97"
+    },
+    {
+      "source": "benchmark/datasets/proteocraft_59_v1/denovo/fastas/HER2.fasta",
+      "destination": "benchmark/datasets/proteocraft_59_v1/denovo/fastas/HER2.fasta",
+      "source_sha256": "825e06b2657ccf40a36a4a0319919c92bc93e2d4eb725e58f2a98265df6f273d"
+    },
+    {
+      "source": "benchmark/datasets/proteocraft_59_v1/denovo/templates/DerF7.cif",
+      "destination": "benchmark/datasets/proteocraft_59_v1/denovo/templates/DerF7.cif",
+      "source_sha256": "2f369bb7e422c0b2911070bfb4bc4405bfcca122ece4ca232ffb3d6b8257af25"
+    },
+    {
+      "source": "benchmark/datasets/proteocraft_59_v1/denovo/templates/BetV1.cif",
+      "destination": "benchmark/datasets/proteocraft_59_v1/denovo/templates/BetV1.cif",
+      "source_sha256": "46d1c1bb89f122af8bd0ae344c3138d18143e088f0ad02764b688a432f16cded"
+    },
+    {
+      "source": "benchmark/datasets/proteocraft_59_v1/denovo/templates/IFNAR2.cif",
+      "destination": "benchmark/datasets/proteocraft_59_v1/denovo/templates/IFNAR2.cif",
+      "source_sha256": "588dfdbffe6c70f8e51b96762746ef0fd3a11e113e709b572d829221937b2e1a"
+    },
+    {
+      "source": "benchmark/datasets/proteocraft_59_v1/denovo/templates/PD1.cif",
+      "destination": "benchmark/datasets/proteocraft_59_v1/denovo/templates/PD1.cif",
+      "source_sha256": "eeac67a9039250b2a97e5433edccb0f4780f1c5b8bea0ba06b1e454ba297e334"
+    },
+    {
+      "source": "benchmark/datasets/proteocraft_59_v1/denovo/templates/HER2.cif",
+      "destination": "benchmark/datasets/proteocraft_59_v1/denovo/templates/HER2.cif",
+      "source_sha256": "1697325e26132e51a04ff5aa0bf586802ecf1cb4142cd8f64aee2908ed1c6008"
+    },
+    {
+      "source": "benchmark/datasets/proteocraft_59_v1/denovo/templates/SpCas9.cif",
+      "destination": "benchmark/datasets/proteocraft_59_v1/denovo/templates/SpCas9.cif",
+      "source_sha256": "1085ccbf677e6db1ce1a0fea225704bc5bc73c2fa34b361faa002b438b3da478"
+    },
+    {
+      "source": "benchmark/datasets/proteocraft_59_v1/denovo/templates/DerF21.cif",
+      "destination": "benchmark/datasets/proteocraft_59_v1/denovo/templates/DerF21.cif",
+      "source_sha256": "c1196aff97197c83e708c08f3ca9da195182e82c3170cdebccaa31651212438a"
+    },
+    {
+      "source": "benchmark/datasets/proteocraft_59_v1/denovo/templates/PD-L1.cif",
+      "destination": "benchmark/datasets/proteocraft_59_v1/denovo/templates/PD-L1.cif",
+      "source_sha256": "93eebf1172d024badabf827a8651096afb2ba8d9eef431dba853ad9c9e9de7b5"
+    },
+    {
+      "source": "benchmark/datasets/proteocraft_59_v1/cdr/fastas/rcsb_pdb_1QRN_abtrunc.fasta",
+      "destination": "benchmark/datasets/proteocraft_59_v1/cdr/fastas/rcsb_pdb_1QRN_abtrunc.fasta",
+      "source_sha256": "05638baf5eb57bfe862c603ae905d4d1d3271a0c1460070c1a32261c2fd231d9"
+    },
+    {
+      "source": "benchmark/datasets/proteocraft_59_v1/cdr/fastas/rcsb_pdb_9NMW_abtrunc.fasta",
+      "destination": "benchmark/datasets/proteocraft_59_v1/cdr/fastas/rcsb_pdb_9NMW_abtrunc.fasta",
+      "source_sha256": "4c759ac435d68fc17ebbe1f284a2aa86f503d38ae07a09e7004bf49951716717"
+    },
+    {
+      "source": "benchmark/datasets/proteocraft_59_v1/cdr/templates/9NMW.cif",
+      "destination": "benchmark/datasets/proteocraft_59_v1/cdr/templates/9NMW.cif",
+      "source_sha256": "1b489a83d5be01c15de6942c5f60c8f19f9d22f8b32f307c48998b5608d64b42"
+    },
+    {
+      "source": "benchmark/datasets/proteocraft_59_v1/cdr/templates/1QRN_fixed_template.cif",
+      "destination": "benchmark/datasets/proteocraft_59_v1/cdr/templates/1QRN_fixed_template.cif",
+      "source_sha256": "89d93da1cb17ee6ec9af0613f84e8c4132ae0e1a36e1517b4bce28826a0247ff"
+    },
+    {
+      "source": "benchmark/yaml/cdr_tcr/esmfold2_cdr_redesign_d_4cases.yaml",
+      "destination": "benchmark/yaml/cdr_tcr/esmfold2_cdr_redesign_d_4cases.yaml",
+      "source_sha256": "a0bf425df3db7489933863ec9b3162513d2dca4338df0bb39337250f9a5b1276"
+    },
+    {
+      "source": "benchmark/yaml/vhh/esmfold2_vhh_redesign_7eow_template.yaml",
+      "destination": "benchmark/yaml/vhh/esmfold2_vhh_redesign_7eow_template.yaml",
+      "source_sha256": "dac14657507dd720c98483d0c5d730ba83dcbbace5a32a906e242b5f51dd7e41"
+    },
+    {
+      "source": "evaluation/metric_pipeline/eval_pipeline/esmfold2_rescore.py",
+      "destination": "proteocraft/evaluation/esmfold2_rescore.py",
+      "source_sha256": "a255ee3fade3039060b910ea40f876c541309c58186dcc77b8f4cba4b8435f49"
+    },
+    {
+      "source": "evaluation/metric_pipeline/eval_pipeline/esmfold2_runner.py",
+      "destination": "proteocraft/evaluation/esmfold2_runner.py",
+      "source_sha256": "426634b02b1de2a6e29c5df0803f4ab4bc73f19b072550ff430c141c40d03f84"
+    },
+    {
+      "source": "evaluation/metric_pipeline/run_esmfold2_rescore.py",
+      "destination": "proteocraft/evaluation/cli.py",
+      "source_sha256": "dc16da9f252192dd45960f072a78c8ef33c3793aa04c01594123e4826fcb0362"
+    },
+    {
+      "source": "environment/esmfold2/download_models.py",
+      "destination": "environment/esmfold2/download_models.py",
+      "source_sha256": "2521033704967d58ef9250a5d59f98c538e672d56409ff6e18e1241f9629837c"
+    },
+    {
+      "source": "environment/esmfold2/environment.yml",
+      "destination": "environment/esmfold2/environment.yml",
+      "source_sha256": "536e6dd0ddb2be370d63d2d85ca6c94dc5602be442bcfc8afbf93b4c64d9cd25"
+    },
+    {
+      "source": "environment/esmfold2/check_environment.py",
+      "destination": "environment/esmfold2/check_environment.py",
+      "source_sha256": "cce6d9af3c5b57368ddc8a044deeb14527988e560cf67fb999db406b45f2f3f5"
+    },
+    {
+      "source": "environment/esmfold2/install.sh",
+      "destination": "environment/esmfold2/install.sh",
+      "source_sha256": "b035bf9ceff442ba4fda2848c59b6c8fe95761119d2a7622631bc2d081bea578"
+    },
+    {
+      "source": "environment/esmfold2/requirements-biohub.txt",
+      "destination": "environment/esmfold2/requirements-biohub.txt",
+      "source_sha256": "f565ea099ce161b26a0e2c270d7dcf4ee72b88ce1038ef8047a64cecf88c4798"
+    },
+    {
+      "source": "environment/esmfold2/requirements-runtime.txt",
+      "destination": "environment/esmfold2/requirements-runtime.txt",
+      "source_sha256": "07bca40092b0113441b85250bf39c013b698dd9b3582dbfffd47e9819d859ba9"
+    },
+    {
+      "source": "environment/esmfold2/README.md",
+      "destination": "environment/esmfold2/README.md",
+      "source_sha256": "4b285c5555ea7e4cbff24a11c7173b7806d21bb25f06f5bf8c269148638793c4"
+    },
+    {
+      "source": "environment/esmfold2/install_optimization.sh",
+      "destination": "environment/esmfold2/install_optimization.sh",
+      "source_sha256": "93f76626e542dd83448e1a63c1e93334022c365e6d24507de2f55ab69add123c"
+    },
+    {
+      "source": "bindcraft/tests/test_esmfold2_backend.py",
+      "destination": "tests/test_esmfold2_backend.py",
+      "source_sha256": "820d17834c1ce0a9b0b1df5696efc2dd78106e4487b8844184c93563d0151e25"
+    },
+    {
+      "source": "bindcraft/tests/test_esmfold2_cdr.py",
+      "destination": "tests/test_esmfold2_cdr.py",
+      "source_sha256": "80baf9c08f2da3487a10a380444c15669753e7a71d78af49716a6bd917317eb4"
+    },
+    {
+      "source": "bindcraft/tests/test_esmfold2_dominance_guard.py",
+      "destination": "tests/test_esmfold2_dominance_guard.py",
+      "source_sha256": "11904b7e973650a87995db56b49b575b728700335519af417a7ac756e373e39e"
+    },
+    {
+      "source": "bindcraft/tests/test_esmfold2_interface.py",
+      "destination": "tests/test_esmfold2_interface.py",
+      "source_sha256": "25a9865bbb1d07de2fd09b50cbc3a5d18f3e2355e6d887295535fc1cd24f8ed5"
+    },
+    {
+      "source": "bindcraft/tests/test_esmfold2_interface_bins.py",
+      "destination": "tests/test_esmfold2_interface_bins.py",
+      "source_sha256": "2b93755bded809e0777a6c6d3f318fa1231e410231ef4ce34a89f38f59f1a53d"
+    },
+    {
+      "source": "bindcraft/tests/test_esmfold2_memory.py",
+      "destination": "tests/test_esmfold2_memory.py",
+      "source_sha256": "78fc113f9a5749ddf9c19d79da32ca1c4c718f09d48a1fcb57c877ece025b49d"
+    },
+    {
+      "source": "bindcraft/tests/test_esmfold2_one_step.py",
+      "destination": "tests/test_esmfold2_one_step.py",
+      "source_sha256": "d9ad1e5ae1e440782f55d763ba92ae6fe36dddcfc2ddebfaaf09b6fff766ca04"
+    },
+    {
+      "source": "bindcraft/tests/test_esmfold2_optimizations.py",
+      "destination": "tests/test_esmfold2_optimizations.py",
+      "source_sha256": "97116f5ffa93414543beeb00c164320b6c919aaf18b9c71682e6988f958d3e57"
+    },
+    {
+      "source": "bindcraft/tests/test_esmfold2_pipeline.py",
+      "destination": "tests/test_esmfold2_pipeline.py",
+      "source_sha256": "40620536fad3d638fe7313cc5f7534d5c9a7337e65176b7cf4822f9ca02cfbeb"
+    },
+    {
+      "source": "bindcraft/tests/test_esmfold2_redesign_regions.py",
+      "destination": "tests/test_esmfold2_redesign_regions.py",
+      "source_sha256": "f089e2515239e5359ae47d274a96f87fe33e6b1aabaf9d9a20acb1dc32ff9769"
+    },
+    {
+      "source": "bindcraft/tests/test_esmfold2_runtime.py",
+      "destination": "tests/test_esmfold2_runtime.py",
+      "source_sha256": "7dc183e7e5627cd5d3a806c39395c64c1a8431940f9376e8a2659b3554a19c94"
+    },
+    {
+      "source": "bindcraft/tests/test_esmfold2_template.py",
+      "destination": "tests/test_esmfold2_template.py",
+      "source_sha256": "7ba20eec3bd1022fad9ffb89f7800104227be3ab0ad77c494d3690f0b43e2d56"
+    },
+    {
+      "source": "bindcraft/tests/test_esmfold2_trimer_runtime.py",
+      "destination": "tests/test_esmfold2_trimer_runtime.py",
+      "source_sha256": "b10f419d15f80ef818958b651d9472e86ff4ca4b638a3b75f6813f47be839e47"
+    },
+    {
+      "source": "bindcraft/tests/test_esmfold2_vhh.py",
+      "destination": "tests/test_esmfold2_vhh.py",
+      "source_sha256": "b6186741dfa96f171b69b5685ec45fffeca4a39e7fb9fc964928c96b30f17dcb"
+    },
+    {
+      "source": "bindcraft/tests/test_esmfold2_59_benchmark.py",
+      "destination": "tests/test_esmfold2_59_benchmark.py",
+      "source_sha256": "ffd9d8e5e599bcdd99ea63dd8a673a22a386d9d9b2938d3daecccaa284132daf"
+    },
+    {
+      "source": "evaluation/metric_pipeline/tests/test_esmfold2_rescore.py",
+      "destination": "tests/test_esmfold2_rescore.py",
+      "source_sha256": "abcc33e51738cf462094e74b8bc4a30e7a2e4f62bfe18eb78be48bb801511ce2"
+    },
+    {
+      "source": "evaluation/metric_pipeline/tests/test_esmfold2_runner.py",
+      "destination": "tests/test_esmfold2_runner.py",
+      "source_sha256": "aabdc0fe607882f81641b02400332e296b48d2c55cae9e0db6ce5fff6d1cb064"
+    },
+    {
+      "source": "LICENSE",
+      "destination": "LICENSE",
+      "source_sha256": "add3b0d4449b29559d6f429d84a09a9b363d78fd516b3315a8ed946eb12ad8eb"
+    }
+  ]
+}

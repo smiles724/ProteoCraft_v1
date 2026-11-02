@@ -1,0 +1,17 @@
+ProteoCraft
+
+This distribution contains ESMFold2 design and search code derived from
+smiles724/ProteoCraft (public main commit
+60fcbfdca59e54ff40bb209ac1bd3037ffec41aa), formerly named BindCraft v2.
+Its source repository was developed from ByteDance's Protenix repository.
+The original Apache License 2.0 is retained in LICENSE. Existing copyright
+notices in retained files are preserved.
+
+The vendored Protenix model, training, MSA and inference implementations are
+not included. Biohub ESM/Transformers, model weights and the optional Anthropic
+optimization sources are external dependencies, with their own licenses and
+notices. They are not redistributed here. Model weights are not covered by
+this repository's software license; consult their original model cards.
+
+See MIGRATION_SOURCE.json and docs/MIGRATION.md for the source inventory and
+the changes made for this ESMFold2-only distribution.

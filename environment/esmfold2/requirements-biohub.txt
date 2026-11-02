@@ -1,0 +1,5 @@
+# Install this file with --no-deps after requirements-runtime.txt.
+# ESM's package metadata follows Transformers main, so both repositories are
+# pinned explicitly here to preserve the environment used for current runs.
+transformers @ git+https://github.com/Biohub/transformers.git@ef32577f55da19a4989cd7b22e004dc43a4998cb
+esm @ git+https://github.com/Biohub/esm.git@82ee35553d39169d678f784c8d3f8712ffd7d2c4

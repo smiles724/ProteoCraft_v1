@@ -1,0 +1,12 @@
+schema_version: 1
+name: proteocraft_59_v1
+description: Portable 59-case ESMFold2 benchmark (14 de novo, 41 TCR, 4 CDR redesign).
+
+manifest: manifest.tsv
+launch_profile: esmfold2_d
+output_dir: benchmark/outputs/esmfold2_59_seed43
+
+expected_counts:
+  denovo: 14
+  tcr: 41
+  cdr_redesign: 4

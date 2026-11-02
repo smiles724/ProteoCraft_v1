@@ -1,0 +1,73 @@
+# Replace the target sequence and optional hotspot indices before running.
+# The 7EOW coordinates are provenance only; ESMFold2 re-predicts the complex.
+
+launch_profile: esmfold2_d
+output_dir: benchmark/outputs/esmfold2_vhh_redesign_7eow
+seed: 43
+
+# Hotspots use 1-based positions in the concatenated INPUT target sequences,
+# not author PDB or UniProt residue numbers. For a UniProt 24-432 input:
+# input_position = UniProt_position - 23. Check residue identity after mapping.
+# YAML keys below are TOP LEVEL and override launch_profile only if specified.
+# esmfold2_d currently sets structural hotspot weights to 0; positions alone
+# still guide proposal hotspots but do not activate a structural penalty.
+# Example values to explicitly enable structural hotspot scoring (not a frozen
+# protocol; only enable these with a nonempty target_hotspots_1based list):
+# esmfold2_hotspot_weight: 0.5
+# esmfold2_hotspot_interface_mode: localized
+# esmfold2_hotspot_verify_weight: 0.25
+# esmfold2_hotspot_verify_near_cutoff: 8.0
+# esmfold2_hotspot_verify_far_cutoff: 20.0
+# esmfold2_hotspot_verify_min_distance: 2.5
+# esmfold2_hotspot_verify_too_close_weight: 0.25
+# Explicit 0/false remain valid for ablations. Effective values and converted
+# indices are written to provenance.json by --prepare-only and actual launches.
+# VHH structural hotspot distances use CDR mutable residues only, including
+# when the binder sequence contains a fixed peptide/linker prefix.
+
+cases:
+  - id: 7EOW_all_CDR
+    target_sequences:
+      - REPLACE_WITH_TARGET_SEQUENCE
+    target_chain_roles:
+      - target
+    target_hotspots_1based: []
+
+    initial_vhh_sequence: EVQLVESGGGLVQPGGSLRLSCAASGRTFSYNPMGWFRQAPGKGRELVAAISRTGGSTYYPDSVEGRFTISRDNAKRMVYLQMNSLRAEDTAVYYCAAAGVRAEDGRVRTLPSEYTFWGQGTQVTVSS
+    numbering:
+      scheme: imgt
+      tool: anarcii
+      tool_version: 2.0.7
+    cdr_regions:
+      CDR1:
+        sequence_indices_1based: [26, 27, 28, 29, 30, 31, 32, 33]
+      CDR2:
+        sequence_indices_1based: [51, 52, 53, 54, 55, 56, 57, 58]
+      CDR3:
+        sequence_indices_1based:
+          - 97
+          - 98
+          - 99
+          - 100
+          - 101
+          - 102
+          - 103
+          - 104
+          - 105
+          - 106
+          - 107
+          - 108
+          - 109
+          - 110
+          - 111
+          - 112
+          - 113
+          - 114
+          - 115
+          - 116
+          - 117
+    mutable_mask: "00000000000000000000000001111111100000000000000000111111110000000000000000000000000000000000000011111111111111111111100000000000"
+    scaffold:
+      pdb_id: 7EOW
+      chain_id: B
+      molecule: caplacizumab
