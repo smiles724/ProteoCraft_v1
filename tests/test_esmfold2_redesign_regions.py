@@ -90,7 +90,10 @@ def test_regions_template_forwarding_and_trace_options(input_case, tmp_path):
         "esmfold2_one_step_diffusion_mode": "template_anchored_truncated_trajectory",
         "esmfold2_save_verified_candidate_cif": True, "esmfold2_save_visualization_trace": True,
     }, case_dir=tmp_path / "out")
-    options = dict(zip(command[2::2], command[3::2]))
+    from proteocraft.cli import parse_args_with_profile
+    args, _ = parse_args_with_profile(command[2:])
+    options = {"--" + key: str(value).lower() if isinstance(value, bool) else str(value)
+               for key, value in vars(args).items()}
     assert options["--esmfold2_structure_regeneration_mask"] == case.mutable_mask_argument
     assert options["--esmfold2_template_chain_ids"] == "A,B,C"
     assert options["--esmfold2_save_verified_candidate_cif"] == "true"

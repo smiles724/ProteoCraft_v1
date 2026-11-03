@@ -22,6 +22,17 @@ class LaunchProfileError(ValueError):
     """Raised when a launch profile is missing or invalid."""
 
 
+def parse_boolean(value: Any) -> bool:
+    """Parse explicit boolean values without treating nonempty strings as true."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "false"}:
+            return normalized == "true"
+    raise ValueError("boolean value must be true or false")
+
+
 def available_launch_profiles() -> tuple[str, ...]:
     """Return bundled profile names in deterministic order."""
 
@@ -101,14 +112,27 @@ def _coerce_profile_value(
     action: argparse.Action,
     value: Any,
 ) -> Any:
+    boolean_option = action.type is parse_boolean or isinstance(
+        action,
+        (argparse.BooleanOptionalAction, argparse._StoreTrueAction, argparse._StoreFalseAction),
+    )
     if value is None:
+        if boolean_option and action.default is not None:
+            raise LaunchProfileError(f"profile option {action.dest!r} requires true or false")
         return None
     if isinstance(value, (dict, list, tuple, set)):
         raise LaunchProfileError(
             f"profile value for {action.dest!r} must be a scalar"
         )
 
-    if action.type is not None and not isinstance(value, bool):
+    if boolean_option:
+        try:
+            value = parse_boolean(value)
+        except ValueError as exc:
+            raise LaunchProfileError(
+                f"invalid boolean for profile option {action.dest!r}: {value!r}"
+            ) from exc
+    elif action.type is not None and not isinstance(value, bool):
         try:
             value = action.type(value)
         except (TypeError, ValueError, AttributeError) as exc:
@@ -128,13 +152,15 @@ def _coerce_profile_value(
 def apply_launch_profile(
     parser: argparse.ArgumentParser,
     profile: str | Path,
+    *,
+    config_parser: argparse.ArgumentParser | None = None,
 ) -> tuple[Path, str, dict[str, Any]]:
     """Apply profile defaults while preserving explicit CLI precedence."""
 
     profile_path, payload = load_launch_profile(profile)
     actions = {
         action.dest: action
-        for action in parser._actions
+        for action in [*parser._actions, *(config_parser._actions if config_parser else [])]
         if action.dest not in {"help", "profile"}
     }
     defaults = payload["defaults"]
@@ -160,3 +186,25 @@ def apply_launch_profile(
     }
     parser.set_defaults(**normalized_defaults)
     return profile_path, payload["name"].strip(), normalized_defaults
+
+
+def write_case_profile(
+    profile: str | Path,
+    overrides: dict[str, Any],
+    destination: Path,
+) -> Path:
+    """Freeze explicit batch-run algorithm settings in a validated YAML profile."""
+    from proteocraft.hallucination.search_config import build_search_config_parser
+
+    _, payload = load_launch_profile(profile)
+    schema = build_search_config_parser()
+    actions = {action.dest: action for action in schema._actions}
+    unknown = sorted(set(overrides) - set(actions))
+    if unknown:
+        raise LaunchProfileError("unknown search configuration options: " + ", ".join(unknown))
+    defaults = dict(payload["defaults"])
+    defaults.update({key: _coerce_profile_value(actions[key], value) for key, value in overrides.items()})
+    payload = dict(payload, defaults=defaults)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+    return destination.resolve()

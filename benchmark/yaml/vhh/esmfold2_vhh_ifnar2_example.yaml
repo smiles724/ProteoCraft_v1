@@ -1,0 +1,72 @@
+# IFNAR2 all-CDR redesign example with a 7EOW chain B VHH scaffold.
+# Hotspots use 1-based positions in the target sequence below.
+# The esmfold2_d profile supplies the search settings.
+launch_profile: esmfold2_d
+output_dir: outputs/vhh_ifnar2
+seed: 43
+cases:
+- id: IFNAR2
+  target_sequences:
+  - ISYDSPDYTDESCTFKISLRNFRSILSWELKNHSIVPTHYTLLYTIMSKPEDLKVVKNCANTTRSFCDLTDEWRSTHEAYVTVLEGFSGNTTLFSCSHNFWLAIDMSFEPPEFEIVGFTNHINVMVKFPSIVEEELQFDLSLVIEEQSEGIVKKHKPEIKGNMSGNFTYIIDKLIPNTNYCVSVYLEHSDEQAVIKSPLKCTLLPPGQESESAESAK
+  target_chain_roles:
+  - target
+  target_hotspots_1based:
+  - 53
+  - 81
+  - 83
+  - 85
+  - 97
+  - 99
+  initial_vhh_sequence: EVQLVESGGGLVQPGGSLRLSCAASGRTFSYNPMGWFRQAPGKGRELVAAISRTGGSTYYPDSVEGRFTISRDNAKRMVYLQMNSLRAEDTAVYYCAAAGVRAEDGRVRTLPSEYTFWGQGTQVTVSS
+  numbering:
+    scheme: imgt
+    tool: anarcii
+    tool_version: 2.0.7
+  cdr_regions:
+    CDR1:
+      sequence_indices_1based:
+      - 26
+      - 27
+      - 28
+      - 29
+      - 30
+      - 31
+      - 32
+      - 33
+    CDR2:
+      sequence_indices_1based:
+      - 51
+      - 52
+      - 53
+      - 54
+      - 55
+      - 56
+      - 57
+      - 58
+    CDR3:
+      sequence_indices_1based:
+      - 97
+      - 98
+      - 99
+      - 100
+      - 101
+      - 102
+      - 103
+      - 104
+      - 105
+      - 106
+      - 107
+      - 108
+      - 109
+      - 110
+      - 111
+      - 112
+      - 113
+      - 114
+      - 115
+      - 116
+      - 117
+  scaffold:
+    pdb_id: 7EOW
+    chain_id: B
+    molecule: caplacizumab

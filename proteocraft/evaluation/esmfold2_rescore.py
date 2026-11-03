@@ -32,6 +32,7 @@ LOCAL_EVALUATOR_SOURCES = (
     "proteocraft/hallucination/esmfold2_optimizations.py",
     "proteocraft/hallucination/esmfold2_one_step.py",
     "proteocraft/hallucination/esmfold2_template.py",
+    "proteocraft/model_sources.py",
     "proteocraft/losses/geometry.py",
 )
 METRICS = ("total_loss", "pair_chain_iptm", "binder_plddt", "iptm", "ptm",

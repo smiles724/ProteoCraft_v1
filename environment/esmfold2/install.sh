@@ -30,7 +30,7 @@ run_in_env python -m pip install --no-deps \
   --requirement "$SCRIPT_DIR/requirements-biohub.txt"
 run_in_env python -m pip install --editable "$REPO_ROOT" --no-deps
 
-run_in_env python "$SCRIPT_DIR/check_environment.py" --require-cuda
+run_in_env python "$SCRIPT_DIR/check_environment.py" --stack stock --require-cuda
 
 cat <<EOF
 

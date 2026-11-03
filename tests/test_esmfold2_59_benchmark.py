@@ -11,6 +11,7 @@ from benchmark.script.run_esmfold2_59 import (
     load_manifest,
     load_prepared_cases,
     parse_overrides,
+    run_cases,
     select_cases,
 )
 from proteocraft.cli import (
@@ -39,6 +40,33 @@ def prepared_cases(benchmark_config):
 
 def _case(cases, case_id):
     return next(case for case in cases if case.case_id == case_id)
+
+
+def test_skipping_completed_case_preserves_saved_search_profile(
+    prepared_cases, benchmark_config, tmp_path, monkeypatch,
+):
+    import benchmark.script.run_esmfold2_59 as runner
+
+    case = _case(prepared_cases, "denovo_BetV1")
+    case_dir = tmp_path / case.case_id
+    artifact = case_dir / "esmfold2_artifacts"
+    artifact.mkdir(parents=True)
+    (artifact / "run_summary.json").write_text("{}\n")
+    profile = case_dir / "search_profile.yaml"
+    saved = "schema_version: 1\nname: original\ndefaults:\n  n_steps: 110\n"
+    profile.write_text(saved)
+
+    def unexpected_launch(*args, **kwargs):
+        raise AssertionError("A skipped case must not launch a model process")
+
+    monkeypatch.setattr(runner.subprocess, "run", unexpected_launch)
+    result = run_cases(
+        [case], config=benchmark_config, profile="esmfold2_d", output_root=tmp_path,
+        device="cuda:0", overrides=[("n_steps", "2")], prepare_only=False,
+        skip_existing=True, continue_on_error=False, num_shards=1, shard_index=0,
+    )
+    assert result == 0
+    assert profile.read_text() == saved
 
 
 def test_manifest_is_portable_and_contains_exactly_59_cases(manifest_rows):
@@ -205,6 +233,22 @@ def test_each_multi_gpu_shard_uses_a_distinct_summary_file():
     assert len(names) == 8
     assert "benchmark_run_summary.shard-00-of-08.json" in names
     assert "benchmark_run_summary.shard-07-of-08.json" in names
+
+
+@pytest.mark.parametrize("value,expected", [("true", True), ("false", False)])
+def test_boolean_batch_overrides_reach_the_real_parser(prepared_cases, tmp_path, value, expected):
+    case = _case(prepared_cases, "denovo_BetV1")
+    command = build_hallucination_command(
+        case, profile="esmfold2_d", device="cuda:0", case_dir=tmp_path,
+        overrides=parse_overrides([
+            f"esmfold2_memory_saved_tensor_pin_memory={value}",
+            f"esmfold2_optimization_timing={value}",
+        ]),
+    )
+    args, parser = parse_args_with_profile(command[2:])
+    resolve_search_defaults(args, parser)
+    assert args.esmfold2_memory_saved_tensor_pin_memory is expected
+    assert args.esmfold2_optimization_timing is expected
 
 
 def test_overrides_cannot_change_benchmark_inputs():

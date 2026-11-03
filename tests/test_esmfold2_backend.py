@@ -21,7 +21,7 @@ from proteocraft.hallucination.esmfold2_backend import (
     select_esmfold2_action_group,
     softly_anchor_mutation_logits,
 )
-from proteocraft.hallucination.mcts_controller import MCTSTree
+from proteocraft.hallucination.stage_b_tree import StageBTree
 
 
 def test_soft_mutation_anchor_changes_only_explicit_edit_positions():
@@ -144,7 +144,7 @@ def test_verifier_result_is_compatible_with_mcts_cache_contract():
     assert "interface_loss" not in result.loss_dict
     assert result.summary_confidence["esm_verify_source"] == "pair_chain_iptm"
 
-    tree = MCTSTree()
+    tree = StageBTree()
     cached = tree.store_verifier_result(result)
     assert cached.binder_seq == "ALY"
     assert cached.total_loss == pytest.approx(0.25)

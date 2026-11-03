@@ -66,7 +66,6 @@ defaults:
   esmfold2_one_step_diffusion_hotspot: false
   esmfold2_distogram_hotspot: true
   esmfold2_track_proposal_confidence: false
-  esmfold2_final_polish: false
   esmfold2_stagea_handoff_checkpoint_interval: 10
   esmfold2_hotspot_cutoff: 8.0
   esmfold2_hotspot_satisfied_proposal_weight: 0.0
@@ -76,4 +75,3 @@ defaults:
   esmfold2_hotspot_verify_far_cutoff: 20.0
   esmfold2_hotspot_verify_min_distance: 2.5
   esmfold2_hotspot_verify_too_close_weight: 0.0
-  checkpoint_save_policy: all

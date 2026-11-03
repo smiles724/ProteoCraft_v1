@@ -633,6 +633,11 @@ def test_runtime_can_preserve_soft_logits_when_sequence_is_a_local_branch():
 
 
 def test_runtime_configures_official_proposal_lm_dropout(monkeypatch):
+    from proteocraft.hallucination import esmfold2_runtime as runtime
+    monkeypatch.setattr(
+        runtime, "resolve_model_source",
+        lambda name: "/cache/pinned-proposal" if name == "biohub/ESMFold2-Experimental-Fast" else name,
+    )
     class FakeExperimentalModel:
         last_instance = None
 
@@ -696,7 +701,7 @@ def test_runtime_configures_official_proposal_lm_dropout(monkeypatch):
     backend._ensure_proposal_models_loaded()
 
     instance = FakeExperimentalModel.last_instance
-    assert instance.from_pretrained_args == ("biohub/ESMFold2-Experimental-Fast",)
+    assert instance.from_pretrained_args == ("/cache/pinned-proposal",)
     assert instance.from_pretrained_kwargs["load_esmc"] is False
     assert instance.load_esmc_call == "fake-esmc"
     assert instance.dropout_call == {

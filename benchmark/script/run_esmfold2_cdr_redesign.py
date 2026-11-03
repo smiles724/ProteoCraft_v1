@@ -83,6 +83,9 @@ def select_cases(config: Mapping[str, Any]) -> list[Mapping[str, Any]]:
 def _append_cli_argument(command: list[str], name: str, value: Any) -> None:
     if value is None:
         return
+    if name == "esmfold2_memory_saved_tensor_pin_memory" and isinstance(value, bool):
+        command.append(f"--{name}" if value else f"--no-{name}")
+        return
     if isinstance(value, bool):
         value = str(value).lower()
     command.extend((f"--{name}", str(value)))
@@ -98,9 +101,31 @@ def build_hallucination_command(
         sys.executable,
         str(PROJECT_ROOT / "scripts" / "run_hallucination.py"),
     ]
-    launch_profile = config.get("launch_profile")
-    if launch_profile:
-        command.extend(("--profile", str(launch_profile)))
+    from proteocraft.cli import build_arg_parser
+    from proteocraft.hallucination.search_config import build_search_config_parser
+    from proteocraft.hallucination.profile_loader import write_case_profile
+    launch_profile = config.get("launch_profile") or "esmfold2_d"
+    schema_names = {action.dest for action in build_search_config_parser()._actions}
+    public_names = {action.dest for action in build_arg_parser()._actions}
+    unsupported = sorted(
+        key for key in config
+        if (key.startswith(("esmfold2_", "mcts_")) or key in {"save_checkpoint_dir", "checkpoint_save_policy"})
+        and key not in schema_names | public_names
+    )
+    if unsupported:
+        raise ValueError("Unsupported search options in task config: " + ", ".join(unsupported))
+    settings = {key: value for key, value in config.items() if key in schema_names and value is not None}
+    if settings.get("esmfold2_one_step_diffusion_mode") == "template_anchored_truncated_trajectory":
+        from proteocraft.hallucination.esmfold2_template import validate_structure_regeneration_mask
+        if case.template_path is None:
+            raise ValueError(f"{case.case_id}: template-anchored mode requires template_path")
+        validate_structure_regeneration_mask(case.mutable_mask)
+        settings.update(target_template_path=case.template_path,
+                        esmfold2_template_chain_ids=case.template_chain_ids_argument,
+                        esmfold2_structure_regeneration_mask=case.mutable_mask_argument)
+    if settings:
+        launch_profile = str(write_case_profile(launch_profile, settings, case_dir / "search_profile.yaml"))
+    command.extend(("--profile", str(launch_profile)))
     command.extend(
         [
             "--esmfold2_task_type",
@@ -119,161 +144,14 @@ def build_hallucination_command(
             str(case_dir),
             "--esmfold2_artifact_dir",
             str(case_dir / "esmfold2_artifacts"),
-            "--save_checkpoint_dir",
-            str(case_dir / "checkpoints"),
             "--log_file",
             str(case_dir / "run.log"),
         ]
     )
-    one_step_mode = str(
-        config.get("esmfold2_one_step_diffusion_mode", "truncated_trajectory")
-    ).strip().lower()
-    if one_step_mode == "template_anchored_truncated_trajectory":
-        from proteocraft.hallucination.esmfold2_template import validate_structure_regeneration_mask
-
-        if case.template_path is None:
-            raise ValueError(
-                f"{case.case_id}: template-anchored mode requires template_path"
-            )
-        validate_structure_regeneration_mask(case.mutable_mask)
-        command.extend(
-            [
-                "--target_template_path",
-                case.template_path,
-                "--esmfold2_template_chain_ids",
-                case.template_chain_ids_argument,
-                "--esmfold2_structure_regeneration_mask",
-                case.mutable_mask_argument,
-            ]
-        )
-    option_map = {
-        "esmfold2_optimization_root": "esmfold2_optimization_root",
-        "esmfold2_proposal_optimization": "esmfold2_proposal_optimization",
-        "esmfold2_verifier_optimization": "esmfold2_verifier_optimization",
-        "esmfold2_esmc_optimization": "esmfold2_esmc_optimization",
-        "esmfold2_optimization_graph_max_tokens": "esmfold2_optimization_graph_max_tokens",
-        "esmfold2_stagea_dominance_gap": "esmfold2_stagea_dominance_gap",
-        "esmfold2_stagea_protected_mutation_candidates": "esmfold2_stagea_protected_mutation_candidates",
-        "device": "device",
-        "n_steps": "n_steps",
-        "learning_rate": "learning_rate",
-        "seed": "seed",
-        "k_top": "k_top",
-        "b_candidates": "b_candidates",
-        "t_sample": "t_sample",
-        "max_mutations_per_seq": "max_mutations_per_seq",
-        "stagea_max_mutations_per_seq": "stagea_max_mutations_per_seq",
-        "esmfold2_stagea_mutation_fraction": (
-            "esmfold2_stagea_mutation_fraction"
-        ),
-        "esmfold2_stagea_candidate_strategy": (
-            "esmfold2_stagea_candidate_strategy"
-        ),
-        "esmfold2_stagea_include_argmax_candidate": (
-            "esmfold2_stagea_include_argmax_candidate"
-        ),
-        "stageb_max_mutations_per_seq": "stageb_max_mutations_per_seq",
-        "mcts_num_beams": "mcts_num_beams",
-        "mcts_strategy": "mcts_strategy",
-        "mcts_bootstrap_steps": "mcts_bootstrap_steps",
-        "mcts_bootstrap_patience": "mcts_bootstrap_patience",
-        "mcts_bootstrap_min_delta": "mcts_bootstrap_min_delta",
-        "mcts_bootstrap_max_steps": "mcts_bootstrap_max_steps",
-        "mcts_handoff_top_k": "mcts_handoff_top_k",
-        "mcts_expand_actions_per_step": "mcts_expand_actions_per_step",
-        "mcts_prior_mode": "mcts_prior_mode",
-        "esmfold2_stagea_soft_steps": "esmfold2_stagea_soft_steps",
-        "esmfold2_stagea_tree_children": "esmfold2_stagea_tree_children",
-        "esmfold2_stagea_root_selection_mode": (
-            "esmfold2_stagea_root_selection_mode"
-        ),
-        "esmfold2_stagea_min_root_expansions": (
-            "esmfold2_stagea_min_root_expansions"
-        ),
-        "esmfold2_stagea_preserve_soft_state": (
-            "esmfold2_stagea_preserve_soft_state"
-        ),
-        "esmfold2_stagea_cumulative_annealing": "esmfold2_stagea_cumulative_annealing",
-        "esmfold2_stagea_paired_verifier_seed": (
-            "esmfold2_stagea_paired_verifier_seed"
-        ),
-        "esmfold2_stageb_soft_steps": "esmfold2_stageb_soft_steps",
-        "esmfold2_stageb_discrete_rerank": (
-            "esmfold2_stageb_discrete_rerank"
-        ),
-        "esmfold2_stageb_rerank_pool_size": (
-            "esmfold2_stageb_rerank_pool_size"
-        ),
-        "esmfold2_stageb_exploration_actions": (
-            "esmfold2_stageb_exploration_actions"
-        ),
-        "esmfold2_stageb_verifier_candidates": (
-            "esmfold2_stageb_verifier_candidates"
-        ),
-        "esmfold2_stageb_paired_verifier_seed": (
-            "esmfold2_stageb_paired_verifier_seed"
-        ),
-        "esmfold2_stageb_verifier_seed": "esmfold2_stageb_verifier_seed",
-        "esmfold2_experimental_model": "esmfold2_experimental_model",
-        "esmfold2_verifier_model": "esmfold2_verifier_model",
-        "esmfold2_verifier_num_loops": "esmfold2_verifier_num_loops",
-        "esmfold2_verifier_num_sampling_steps": "esmfold2_verifier_num_sampling_steps",
-        "esmfold2_proposal_num_loops": "esmfold2_proposal_num_loops",
-        "esmfold2_proposal_num_sampling_steps": "esmfold2_proposal_num_sampling_steps",
-        "esmfold2_proposal_load_internal_esmc": "esmfold2_proposal_load_internal_esmc",
-        "esmfold2_proposal_lm_dropout": "esmfold2_proposal_lm_dropout",
-        "esmfold2_force_proposal_lm_dropout": "esmfold2_force_proposal_lm_dropout",
-        "esmfold2_one_step_diffusion": "esmfold2_one_step_diffusion",
-        "esmfold2_one_step_diffusion_tau": "esmfold2_one_step_diffusion_tau",
-        "esmfold2_one_step_diffusion_mode": "esmfold2_one_step_diffusion_mode",
-        "esmfold2_one_step_truncated_num_sampling_steps": (
-            "esmfold2_one_step_truncated_num_sampling_steps"
-        ),
-        "esmfold2_one_step_truncated_schedule_mode": (
-            "esmfold2_one_step_truncated_schedule_mode"
-        ),
-        "esmfold2_one_step_truncated_dense_num_sampling_steps": (
-            "esmfold2_one_step_truncated_dense_num_sampling_steps"
-        ),
-        "esmfold2_one_step_diffusion_weight": "esmfold2_one_step_diffusion_weight",
-        "esmfold2_one_step_diffusion_rg_weight": "esmfold2_one_step_diffusion_rg_weight",
-        "esmfold2_one_step_diffusion_interval": "esmfold2_one_step_diffusion_interval",
-        "esmfold2_one_step_recycle_coordinates": "esmfold2_one_step_recycle_coordinates",
-        "esmfold2_one_step_diffusion_hotspot": "esmfold2_one_step_diffusion_hotspot",
-        "esmfold2_distogram_hotspot": "esmfold2_distogram_hotspot",
-        "esmfold2_verifier_loss_mode": "esmfold2_verifier_loss_mode",
-        "esmfold2_lambda_esmc": "esmfold2_lambda_esmc",
-        "esmfold2_logit_init_mode": "esmfold2_logit_init_mode",
-        "esmfold2_initial_logits_checkpoint": "esmfold2_initial_logits_checkpoint",
-        "esmfold2_track_proposal_confidence": (
-            "esmfold2_track_proposal_confidence"
-        ),
-        "esmfold2_final_polish": "esmfold2_final_polish",
-        "esmfold2_stagea_handoff_checkpoint_interval": "esmfold2_stagea_handoff_checkpoint_interval",
-        "esmfold2_hotspot_cutoff": "esmfold2_hotspot_cutoff",
-        "esmfold2_hotspot_satisfied_proposal_weight": (
-            "esmfold2_hotspot_satisfied_proposal_weight"
-        ),
-        "esmfold2_hotspot_interface_mode": "esmfold2_hotspot_interface_mode",
-        "esmfold2_hotspot_verify_weight": "esmfold2_hotspot_verify_weight",
-        "esmfold2_hotspot_verify_near_cutoff": (
-            "esmfold2_hotspot_verify_near_cutoff"
-        ),
-        "esmfold2_hotspot_verify_far_cutoff": (
-            "esmfold2_hotspot_verify_far_cutoff"
-        ),
-        "esmfold2_hotspot_verify_min_distance": (
-            "esmfold2_hotspot_verify_min_distance"
-        ),
-        "esmfold2_hotspot_verify_too_close_weight": (
-            "esmfold2_hotspot_verify_too_close_weight"
-        ),
-        "checkpoint_save_policy": "checkpoint_save_policy",
-        "esmfold2_save_verified_candidate_cif": "esmfold2_save_verified_candidate_cif",
-        "esmfold2_save_visualization_trace": "esmfold2_save_visualization_trace",
-    }
-    for config_key, cli_name in option_map.items():
-        _append_cli_argument(command, cli_name, config.get(config_key))
+    task_inputs = {"target", "binder_length", "esmfold2_task_type", "init_binder_seq",
+                   "esmfold2_mutable_mask", "esmfold2_target_chain_roles", "output_dir", "profile"}
+    for name in sorted(public_names - task_inputs - {"help", "esmfold2_optimization_timing"}):
+        _append_cli_argument(command, name, config.get(name))
     if config.get("esmfold2_optimization_timing") is True:
         command.append("--esmfold2_optimization_timing")
     return command

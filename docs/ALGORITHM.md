@@ -24,11 +24,14 @@ predicted anew; a fixed sequence does not imply fixed coordinates.
    search-time acceleration settings and seeds from implicitly becoming the
    evaluation protocol.
 
+The default search budget is summarized below:
+
+![Default search budget: Stage A explores for 70 rounds with 30 soft updates per proposal; up to two verified states enter Stage B, which refines for 40 rounds with 20 soft updates per proposal.](assets/search-workflow.png)
+
 The default profile is
 `proteocraft/configs/proteocraft_profiles/esmfold2_d.yaml`.
-Its numerical values are retained from the 2026-11-01 mainline. Explicit CLI
-arguments override the profile. Changing search budgets or kernel modes can
-change outcomes; compare them with matched inputs, seeds and evaluation rules.
+Explicit CLI arguments override the profile. Changing search budgets or kernel
+modes can change outcomes; compare them with matched inputs, seeds and evaluation rules.
 
 ## Code map
 
@@ -39,13 +42,16 @@ change outcomes; compare them with matched inputs, seeds and evaluation rules.
 | `hallucination/esmfold2_backend.py` | Configurations, amino-acid logits, mutation sampling, verifier result contracts |
 | `hallucination/esmfold2_runtime.py` | Biohub model calls and differentiable proposal updates |
 | `hallucination/esmfold2_one_step.py` | Truncated diffusion and common geometry/confidence objectives |
-| `hallucination/mcts_*.py` | Tree state, normalization and UCB selection |
+| `hallucination/stage_a_tree.py` | Stage A soft-state tree and hierarchical UCB selection |
+| `hallucination/stage_b_tree.py` | Stage B action tree, priors, normalization and archives |
+| `hallucination/search_config.py` | Types and choices for maintainer YAML settings |
 | `hallucination/mutation_proposer.py` | Discrete substitution candidates and priors |
 | `hallucination/esmfold2_cdr.py`, `esmfold2_vhh.py` | Mutable masks, chain roles and framework invariants |
 | `hallucination/esmfold2_memory.py`, `esmfold2_optimizations.py` | Model residency and explicit external-kernel adapters |
 | `evaluation/` | Frozen independent ESMFold2 rescoring |
 
-Paths in the last nine rows are relative to `proteocraft/`. The template module
+Paths beginning with `hallucination/` or `evaluation/` are relative to
+`proteocraft/`. The template module
 remains because the retained backend imports its contracts and local-redesign
 helpers; removing it would change supported redesign semantics. Separate
 dual-target fusion launchers and experiments are outside this distribution.
