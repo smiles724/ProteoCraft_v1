@@ -356,7 +356,7 @@ class MCTSNode:
         return path
 
 
-class MCTSTree:
+class StageBTree:
     """
     MCTS 树管理器。
 

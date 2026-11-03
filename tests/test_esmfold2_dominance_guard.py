@@ -147,14 +147,12 @@ def test_invalid_guard_config(gap, count):
         build("positive_score_guarded", dominance_gap=gap, protected_mutation_candidates=count)
 
 
-def test_cli_defaults_and_opt_in():
+def test_cli_defaults_and_profile_override(tmp_path):
     args, parser = parse_args_with_profile(["--target", "AAAA"])
     assert args.esmfold2_stagea_candidate_strategy == "positive_score_guarded"
-    args, parser = parse_args_with_profile([
-        "--target", "AAAA",
-         "--esmfold2_stagea_candidate_strategy", "positive_score_guarded",
-        "--esmfold2_stagea_dominance_gap", "0.7",
-    ])
+    from proteocraft.hallucination.profile_loader import write_case_profile
+    profile = write_case_profile("esmfold2_d", {"esmfold2_stagea_dominance_gap": 0.7}, tmp_path / "profile.yaml")
+    args, parser = parse_args_with_profile(["--target", "AAAA", "--profile", str(profile)])
     assert resolve_search_defaults(args, parser) == "esmfold2"
     assert args.esmfold2_stagea_dominance_gap == 0.7
     assert args.esmfold2_stagea_protected_mutation_candidates == 2
@@ -162,13 +160,8 @@ def test_cli_defaults_and_opt_in():
 
 @pytest.mark.parametrize("strategy", ["best_of_n", "raw_lineage_stage_a", "continuous_stage_a"])
 def test_unsupported_modes_fail_loudly(strategy):
-    args, parser = parse_args_with_profile([
-        "--target", "AAAA",
-        "--mcts_strategy", strategy,
-        "--esmfold2_stagea_candidate_strategy", "positive_score_guarded",
-    ])
     with pytest.raises(SystemExit):
-        resolve_search_defaults(args, parser)
+        parse_args_with_profile(["--target", "AAAA", "--mcts_strategy", strategy])
 
 
 def test_old_backend_cannot_silently_drop_guard_parameters():
@@ -197,6 +190,7 @@ def test_backend_wrapper_forwards_guard_only_when_requested():
 @pytest.mark.parametrize("kind", ["cdr", "vhh"])
 def test_task_launchers_forward_guard_config(kind, tmp_path):
     config = {"launch_profile": "esmfold2_d",
+              "esmfold2_memory_saved_tensor_pin_memory": False,
               "esmfold2_stagea_candidate_strategy": "positive_score_guarded",
               "esmfold2_stagea_dominance_gap": 0.8,
               "esmfold2_stagea_protected_mutation_candidates": 3}
@@ -218,9 +212,10 @@ def test_task_launchers_forward_guard_config(kind, tmp_path):
     assert args.esmfold2_stagea_candidate_strategy == "positive_score_guarded"
     assert args.esmfold2_stagea_dominance_gap == 0.8
     assert args.esmfold2_stagea_protected_mutation_candidates == 3
+    assert args.esmfold2_memory_saved_tensor_pin_memory is False
 
 
-@pytest.mark.parametrize("strategy", ["stage_a_only", "two_stage"])
+@pytest.mark.parametrize("strategy", ["two_stage"])
 def test_guarded_search_records_config_and_keeps_stageb_unmodified(strategy, tmp_path):
     from tests.test_esmfold2_pipeline import FakeESMFold2Backend
     from proteocraft.hallucination.esmfold2_pipeline import run_esmfold2_mcts_hallucination

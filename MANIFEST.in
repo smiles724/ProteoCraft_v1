@@ -1,4 +1,4 @@
-include NOTICE MIGRATION_SOURCE.json
+include NOTICE MIGRATION_SOURCE.json README.zh-CN.md
 graft docs
 graft environment/esmfold2
 graft benchmark/datasets/proteocraft_59_v1

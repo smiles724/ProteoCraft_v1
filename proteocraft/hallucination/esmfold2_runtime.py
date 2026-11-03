@@ -52,6 +52,7 @@ from proteocraft.hallucination.esmfold2_interface import (
     select_coordinate_interface, select_distogram_interface,
 )
 from proteocraft.hallucination.esmfold2_optimizations import OptimizationManager, measured
+from proteocraft.model_sources import resolve_model_source
 
 
 logger = logging.getLogger(__name__)
@@ -1701,10 +1702,15 @@ class ESMFold2RuntimeBackend:
             from transformers.models.esmfold2.modeling_esmfold2 import ESMFold2Model
 
             logger.info("Loading ESMFold2 verifier model: %s", self.config.verifier_model_name)
-            self.verifier_model = ESMFold2Model.from_pretrained(
-                self.config.verifier_model_name,
+            verifier_model = ESMFold2Model.from_pretrained(
+                resolve_model_source(self.config.verifier_model_name),
+                load_esmc=False,
                 esmc_precision="bf16",
-            ).to(self.device).eval().requires_grad_(False)
+            )
+            verifier_model.load_esmc(
+                resolve_model_source(verifier_model.config.esmc_id), precision="bf16",
+            )
+            self.verifier_model = verifier_model.to(self.device).eval().requires_grad_(False)
         self.optimizations.memory.place("verifier", self.verifier_model)
         self.optimizations.verifier(self.verifier_model, self.input_builder)
         if self.config.esmc_optimization != "off":
@@ -1724,7 +1730,7 @@ class ESMFold2RuntimeBackend:
                 self.config.experimental_model_name,
             )
             experimental_model = ESMFold2ExperimentalModel.from_pretrained(
-                self.config.experimental_model_name,
+                resolve_model_source(self.config.experimental_model_name),
                 load_esmc=False,
             )
             if bool(getattr(self.config, "proposal_load_internal_esmc", True)):
@@ -1738,7 +1744,7 @@ class ESMFold2RuntimeBackend:
                         "ESMFold2 experimental proposal model config does not define esmc_id"
                     )
                 logger.info("Loading ESMFold2 experimental internal ESMC: %s", esmc_id)
-                experimental_model.load_esmc(esmc_id)
+                experimental_model.load_esmc(resolve_model_source(esmc_id))
             proposal_lm_dropout = getattr(self.config, "proposal_lm_dropout", None)
             if proposal_lm_dropout is not None:
                 if not hasattr(experimental_model, "configure_lm_dropout"):
@@ -1773,7 +1779,7 @@ class ESMFold2RuntimeBackend:
             model_name = getattr(self.config, "esmc_model_name", "biohub/ESMC-6B")
             logger.info("Loading ESMC sequence-prior model: %s", model_name)
             self.esmc_model = ESMCForMaskedLM.from_pretrained(
-                model_name,
+                resolve_model_source(model_name),
                 torch_dtype=torch.float32,
             ).to(self.device).eval().requires_grad_(False)
         if self.esmc_model is not None:

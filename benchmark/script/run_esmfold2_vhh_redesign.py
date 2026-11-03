@@ -39,49 +39,6 @@ HOTSPOT_OPTIONS = (
 )
 
 
-PASSTHROUGH_OPTIONS = HOTSPOT_OPTIONS + (
-    "esmfold2_optimization_root",
-    "esmfold2_proposal_optimization",
-    "esmfold2_verifier_optimization",
-    "esmfold2_esmc_optimization",
-    "esmfold2_optimization_graph_max_tokens",
-    "esmfold2_memory_mode",
-    "esmfold2_memory_token_threshold",
-    "esmfold2_memory_min_free_gib",
-    "esmfold2_memory_prior_residency",
-    "device",
-    "seed",
-    "n_steps",
-    "learning_rate",
-    "b_candidates",
-    "mcts_num_beams",
-    "mcts_strategy",
-    "mcts_bootstrap_steps",
-    "mcts_bootstrap_max_steps",
-    "mcts_prior_mode",
-    "esmfold2_stagea_soft_steps",
-    "esmfold2_stagea_mutation_fraction",
-    "esmfold2_stagea_candidate_strategy",
-    "esmfold2_stagea_dominance_gap",
-    "esmfold2_stagea_protected_mutation_candidates",
-    "esmfold2_stagea_include_argmax_candidate",
-    "esmfold2_stageb_soft_steps",
-    "esmfold2_stageb_verifier_candidates",
-    "esmfold2_verifier_num_loops",
-    "esmfold2_verifier_num_sampling_steps",
-    "esmfold2_one_step_diffusion",
-    "esmfold2_one_step_diffusion_mode",
-    "esmfold2_one_step_diffusion_tau",
-    "esmfold2_one_step_truncated_num_sampling_steps",
-    "esmfold2_one_step_truncated_schedule_mode",
-    "esmfold2_one_step_truncated_dense_num_sampling_steps",
-    "esmfold2_one_step_recycle_coordinates",
-    "esmfold2_lambda_esmc",
-    "esmfold2_save_verified_candidate_cif",
-    "esmfold2_save_visualization_trace",
-    "checkpoint_save_policy",
-)
-
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -144,6 +101,9 @@ def select_cases(config: Mapping[str, Any]) -> list[Mapping[str, Any]]:
 def _append_cli_argument(command: list[str], name: str, value: Any) -> None:
     if value is None:
         return
+    if name == "esmfold2_memory_saved_tensor_pin_memory" and isinstance(value, bool):
+        command.append(f"--{name}" if value else f"--no-{name}")
+        return
     if isinstance(value, bool):
         value = str(value).lower()
     command.extend((f"--{name}", str(value)))
@@ -159,9 +119,23 @@ def build_hallucination_command(
         sys.executable,
         str(PROJECT_ROOT / "scripts" / "run_hallucination.py"),
     ]
-    launch_profile = config.get("launch_profile")
-    if launch_profile:
-        command.extend(("--profile", str(launch_profile)))
+    from proteocraft.cli import build_arg_parser
+    from proteocraft.hallucination.search_config import build_search_config_parser
+    from proteocraft.hallucination.profile_loader import write_case_profile
+    launch_profile = config.get("launch_profile") or "esmfold2_d"
+    schema_names = {action.dest for action in build_search_config_parser()._actions}
+    public_names = {action.dest for action in build_arg_parser()._actions}
+    unsupported = sorted(
+        key for key in config
+        if (key.startswith(("esmfold2_", "mcts_")) or key in {"save_checkpoint_dir", "checkpoint_save_policy"})
+        and key not in schema_names | public_names
+    )
+    if unsupported:
+        raise ValueError("Unsupported search options in task config: " + ", ".join(unsupported))
+    settings = {key: value for key, value in config.items() if key in schema_names and value is not None}
+    if settings:
+        launch_profile = str(write_case_profile(launch_profile, settings, case_dir / "search_profile.yaml"))
+    command.extend(("--profile", str(launch_profile)))
     command.extend(
         [
             "--esmfold2_task_type",
@@ -180,16 +154,16 @@ def build_hallucination_command(
             str(case_dir),
             "--esmfold2_artifact_dir",
             str(case_dir / "esmfold2_artifacts"),
-            "--save_checkpoint_dir",
-            str(case_dir / "checkpoints"),
             "--log_file",
             str(case_dir / "run.log"),
         ]
     )
     if case.target_hotspots_argument is not None:
         command.extend(("--target_hotspots", case.target_hotspots_argument))
-    for option_name in PASSTHROUGH_OPTIONS:
-        _append_cli_argument(command, option_name, config.get(option_name))
+    task_inputs = {"target", "binder_length", "esmfold2_task_type", "init_binder_seq",
+                   "esmfold2_mutable_mask", "esmfold2_target_chain_roles", "target_hotspots", "output_dir", "profile"}
+    for name in sorted(public_names - task_inputs - {"help", "esmfold2_optimization_timing"}):
+        _append_cli_argument(command, name, config.get(name))
     if config.get("esmfold2_optimization_timing") is True:
         command.append("--esmfold2_optimization_timing")
     return command

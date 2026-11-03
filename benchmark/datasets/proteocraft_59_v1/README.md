@@ -21,7 +21,7 @@ CIF, and PDB inputs.
 current recommended `esmfold2_d` launch profile. The profile itself lives at:
 
 ```text
-configs/proteocraft_profiles/esmfold2_d.yaml
+proteocraft/configs/proteocraft_profiles/esmfold2_d.yaml
 ```
 
 The manifest preserves the case and hotspot registry used by the historical

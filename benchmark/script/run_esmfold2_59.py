@@ -12,7 +12,7 @@ import sys
 from collections import Counter
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Mapping, Sequence
 
 import yaml
 
@@ -92,7 +92,6 @@ PROTECTED_OVERRIDES = frozenset(
         "esmfold2_mutable_mask",
         "output_dir",
         "esmfold2_artifact_dir",
-        "save_checkpoint_dir",
         "log_file",
         "device",
     }
@@ -542,8 +541,6 @@ def build_hallucination_command(
         str(case_dir),
         "--esmfold2_artifact_dir",
         str(case_dir / "esmfold2_artifacts"),
-        "--save_checkpoint_dir",
-        str(case_dir / "checkpoints"),
         "--log_file",
         str(case_dir / "run.log"),
         "--device",
@@ -564,8 +561,19 @@ def build_hallucination_command(
         command.extend(("--init_binder_seq", case.initial_binder_sequence))
     if case.mutable_mask is not None:
         command.extend(("--esmfold2_mutable_mask", case.mutable_mask))
+    from proteocraft.cli import build_arg_parser
+    from proteocraft.hallucination.profile_loader import parse_boolean, write_case_profile
+    public = {action.dest for action in build_arg_parser()._actions}
+    settings = {key: value for key, value in overrides if key not in public}
+    if settings:
+        command[command.index("--profile") + 1] = str(write_case_profile(
+            profile, settings, case_dir / "search_profile.yaml"))
     for key, value in overrides:
-        command.extend((f"--{key}", value))
+        if key in public:
+            if key in {"esmfold2_memory_saved_tensor_pin_memory", "esmfold2_optimization_timing"}:
+                command.append(f"--{key}" if parse_boolean(value) else f"--no-{key}")
+            else:
+                command.extend((f"--{key}", value))
     return command
 
 
@@ -625,6 +633,10 @@ def run_cases(
     config_path = Path(str(config["config_path"]))
     for case in cases:
         case_dir = output_root / case.case_id
+        if not prepare_only and skip_existing and _is_complete(case_dir):
+            print(f"[skip] {case.case_id}: existing run_summary.json")
+            records.append({"case_id": case.case_id, "status": "skipped"})
+            continue
         command = build_hallucination_command(
             case,
             profile=profile,
@@ -635,10 +647,6 @@ def run_cases(
         if prepare_only:
             print(shlex.join(command))
             records.append({"case_id": case.case_id, "status": "prepared"})
-            continue
-        if skip_existing and _is_complete(case_dir):
-            print(f"[skip] {case.case_id}: existing run_summary.json")
-            records.append({"case_id": case.case_id, "status": "skipped"})
             continue
         _write_case_record(
             case,

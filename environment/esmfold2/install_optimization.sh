@@ -50,5 +50,18 @@ git -C "$ESMOPT_ESM_SOURCE" checkout --detach "$ESMOPT_ESM_COMMIT"
 "$ESMOPT_ENV/bin/python" -m pip install --no-deps \
   --editable "$ESMOPT_ESM_SOURCE"
 "$ESMOPT_ENV/bin/python" -m pip install --no-deps --editable "$REPO_ROOT"
+"$ESMOPT_ENV/bin/python" "$REPO_ROOT/environment/esmfold2/check_environment.py" --require-cuda
 "$ESMOPT_ENV/bin/python" -m pip freeze > "$ESMOPT_ENV/requirements.receipt.txt"
+"$ESMOPT_ENV/bin/python" - "$ESMOPT_ENV" "$PROTEOCRAFT_UPLIFT_ROOT" <<'PY'
+from pathlib import Path
+import shlex
+import sys
+environment, uplift = (Path(value).expanduser().resolve() for value in sys.argv[1:])
+(environment / "activate_proteocraft.sh").write_text(
+    "#!/usr/bin/env bash\n"
+    + f"source {shlex.quote(str(environment / 'bin/activate'))}\n"
+    + f"export PROTEOCRAFT_UPLIFT_ROOT={shlex.quote(str(uplift))}\n"
+)
+PY
 printf 'Environment ready: %s\nRun from: %s\n' "$ESMOPT_ENV" "$REPO_ROOT"
+printf 'Activate with: source %q/activate_proteocraft.sh\n' "$ESMOPT_ENV"

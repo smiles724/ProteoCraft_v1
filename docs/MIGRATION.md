@@ -71,20 +71,83 @@ rescoring and fresh-process imports without Protenix. Real model calls in these
 tests are replaced with explicit test backends; CUDA/external-kit tests skip
 when their requirements are absent.
 
-The 14 retained computational/search modules were compared by Python AST after
+During the initial extraction, the 14 retained computational/search modules were compared by Python AST after
 the `bindcraft` → `proteocraft` namespace change and docstring updates; their
 algorithm bodies match the source. Profile lookup, package initialization,
 CLI/backend routing and evaluator file locations were deliberately changed.
 The stock and accelerated package/model version locks remain inherited pins.
 
-The cleanup was validated on macOS with Python 3.12 CPU tests, package builds,
-installed command checks, all 59 benchmark inputs and all four CDR batch inputs.
-The final CPU run completed with **504 passed and 12 skipped**. All 25 original
-benchmark input-file SHA-256 checks passed. Wheel installation was checked in a
-separate environment outside the source checkout, including bundled profile and
-evaluator-source lookup and model-free rescoring preparation. Critical Ruff
-checks and shell syntax checks passed. The new GitHub Actions workflow has been
-prepared; it has not run on GitHub during local validation.
-This work did **not** install the Linux CUDA environment, download model weights,
-run new GPU inference, measure acceleration, or evaluate wet-lab design quality.
-GPU execution of the cleaned distribution remains unverified.
+The initial extraction was validated with 504 CPU tests and 12 skips. The
+following local simplification preserved the default `esmfold2_d` numerical
+recipe and removed Best-of-N, chunked Best-of-N, continuous/raw-lineage drivers
+and final polish. Only the two-stage search strategy remains. The active trees
+were renamed `stage_a_tree.py` and `stage_b_tree.py`; their ASTs are unchanged
+apart from names. The public CLI now has 32 options; algorithm settings are
+validated in maintainer YAML profiles. The ineffective `save_checkpoint_dir`
+and `checkpoint_save_policy` options were removed.
+
+The cleanup checks completed with **517 passed and 12 skipped**, plus an
+explicit check that empty Stage B iterations still consume budget. All source
+inputs and reference structures were preserved. Critical Ruff checks, package
+builds and installed-wheel checks passed. The wheel excludes tests, benchmark
+inputs, run outputs and the removed tree modules. Batch launchers reject removed
+algorithm options and preserve existing profiles when skipping completed cases.
+The repository's [GitHub Actions workflow](https://github.com/smiles724/ProteoCraft_v1/actions/workflows/ci.yml)
+runs the CPU suite, package builds and installed-wheel checks.
+
+Subsequent local checks corrected boolean configuration parsing, saved the final
+selected structure together with its matching metrics, rejected handoff recovery
+against a different fixed binder framework, and corrected boolean overrides in
+the batch launcher. These changes passed CPU regression tests and installed-wheel
+checks. The latest source including these boundary fixes has not yet repeated
+the complete GPU search described below.
+
+A real IFNAR2 VHH case was run with both the frozen pre-cleanup package and the
+simplified package on H200 GPUs. Both completed 110 proposal calls and 2,900 soft
+updates, with the 70/40 Stage A/B budget and unchanged framework sequences. Saved
+structures and handoff states were validated. Delivered sequences from these
+runs and the historical run were then rescored using the same unoptimized
+20-loop/200-step protocol and three seeds: all 9 scores completed successfully.
+
+The first review harness incorrectly equated trajectory rows with budget
+iterations. Empty Stage B iterations append loss history without emitting an
+action trajectory row. The original failed harness receipts were retained;
+independent validation used all 110 contiguous history entries, the 70-round
+handoff checkpoint, actual model-call counts and the saved structures.
+
+This review also reproduced a pre-existing numerical-repeatability limitation:
+fixed sequence/seed 4x50 predictions vary in both the pre-cleanup and simplified
+packages, including with external acceleration disabled. Repeated input
+preparation produced identical tensor features for this case. The inference
+output variability has not been root-caused or changed in this cleanup. One
+full case establishes the tested workflow and its constraints; it does not
+establish general design-quality equivalence or experimental binding.
+
+The existing Linux/CUDA environment and cached model revisions were reused.
+Fresh Linux installation and low-memory/offload modes were not validated in
+this round. No new commit or push was made during the local simplification.
+
+
+## First-run workflow update, 2026-11-03
+
+The stock Transformers URL now uses the public Hugging Face repository at the
+same immutable commit. A filtered Git fetch resolved that commit successfully.
+Both environment locks now use zstd 1.5.7.2, the maintainer's recommendation
+after the 1.5.7.3 thread-safety withdrawal. On macOS/Python 3.12, 128 concurrent
+round-trip reads of compressed NumPy/pickle data passed with the new version.
+
+The accelerated installer now runs its matching dependency/source/GPU check.
+Model download and offline checks validate pinned file lengths, safetensors
+headers and ESMC shard indexes. The reusable activation script restores all
+paths. A four-round Bet v 1 smoke command checks both stages, saved outputs,
+applied acceleration and completed forward/gradient calls. The complete IFNAR2
+VHH example copies inputs from the cleanup regression; its source checksum is
+recorded in the YAML.
+
+Local CPU tests completed with **531 passed and 12 skipped**. Regression cases
+cover missing/truncated/corrupt weights, inconsistent shard indexes, editable
+source detection, shell activation, the short search budget and output checks.
+Lint, package builds, installed-wheel checks and input preparation passed.
+The main algorithm, its default profile and model-resolution behavior were
+unchanged. Fresh Linux installation, full model downloads and the new GPU smoke
+command remain untested while 15122 is unavailable.

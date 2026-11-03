@@ -125,13 +125,15 @@ def test_cdr_launcher_forwards_one_step_diffusion_options(tmp_path):
             "esmfold2_stageb_exploration_actions": 1,
             "esmfold2_stageb_verifier_candidates": 8,
             "esmfold2_stageb_paired_verifier_seed": True,
-            "checkpoint_save_policy": "all",
         },
         case_dir=tmp_path / "output",
     )
-    options = dict(zip(command[::2], command[1::2]))
+    args, parser = parse_args_with_profile(command[2:])
+    resolve_search_defaults(args, parser)
+    options = {"--" + key: str(value).lower() if isinstance(value, bool) else str(value)
+               for key, value in vars(args).items()}
 
-    assert options["--profile"] == "esmfold2_d"
+    assert args.launch_profile_name == "esmfold2_d"
     assert options["--esmfold2_one_step_diffusion"] == "true"
     assert options["--esmfold2_stagea_root_selection_mode"] == "hierarchical_ucb"
     assert options["--esmfold2_stagea_min_root_expansions"] == "2"
@@ -155,8 +157,6 @@ def test_cdr_launcher_forwards_one_step_diffusion_options(tmp_path):
     assert options["--esmfold2_stageb_exploration_actions"] == "1"
     assert options["--esmfold2_stageb_verifier_candidates"] == "8"
     assert options["--esmfold2_stageb_paired_verifier_seed"] == "true"
-    assert options["--save_checkpoint_dir"] == str(tmp_path / "output" / "checkpoints")
-    assert options["--checkpoint_save_policy"] == "all"
 
 
 @pytest.mark.parametrize(

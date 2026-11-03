@@ -85,3 +85,20 @@ def test_documented_rescore_candidate_freezes_without_models(tmp_path):
     result = esmfold2_rescore.report(output)
     assert result["expected_scores"] == 3
     assert result["successful_scores"] == 0
+
+
+def test_design_cli_writes_result_after_completed_search(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from proteocraft import cli
+    from proteocraft.hallucination import esmfold2_pipeline
+
+    monkeypatch.setattr(cli, "load_esmfold2_backend", lambda *args, **kwargs: SimpleNamespace())
+    monkeypatch.setattr(
+        esmfold2_pipeline, "run_esmfold2_mcts_hallucination",
+        lambda **kwargs: ("AA", "AG", [1.0, 0.9]),
+    )
+    cli.main(["--target", "ACDE", "--binder_length", "2",
+              "--output_dir", str(tmp_path), "--device", "cpu"])
+    result = (tmp_path / "hallucination_result.txt").read_text()
+    assert "Best Sequence: AA" in result
+    assert "Final Sequence: AG" in result

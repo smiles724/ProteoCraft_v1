@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="640" viewBox="0 0 800 640" role="img" aria-labelledby="title description">
+  <title id="title">One search, two stages</title>
+  <desc id="description">Target sequences and design constraints initialize the search. Stage A explores with gradient updates and full prediction verification, using 70 rounds and 30 soft updates per proposal by default. Up to two verified candidates enter Stage B, which refines single substitutions using 40 rounds and 20 soft updates per proposal. The output includes the selected sequence, structure and scores.</desc>
+  <defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto"><path d="M0 0L8 4L0 8Z" fill="#8aa0b0"/></marker></defs>
+  <rect width="800" height="640" rx="12" fill="#f7f9fc"/>
+  <g font-family="Arial, Helvetica, sans-serif" fill="#192f49">
+    <text x="400" y="47" text-anchor="middle" font-size="30">Target + design constraints</text>
+    <path d="M400 62V92" stroke="#8aa0b0" stroke-width="2" marker-end="url(#arrow)"/>
+    <rect x="28" y="106" width="744" height="158" rx="12" fill="#e1f1ef"/>
+    <text x="54" y="146" font-size="26" fill="#086e73">Stage A</text>
+    <text x="54" y="188" font-size="36" font-weight="700">Explore sequence space</text>
+    <text x="54" y="222" font-size="27">Gradient proposals + full prediction verification</text>
+    <text x="54" y="251" font-size="25" fill="#375f67">70 rounds / 30 soft updates per proposal</text>
+    <path d="M400 268V286" stroke="#8aa0b0" stroke-width="2" marker-end="url(#arrow)"/>
+    <text x="400" y="319" text-anchor="middle" font-size="27">Up to 2 verified candidates</text>
+    <path d="M400 332V350" stroke="#8aa0b0" stroke-width="2" marker-end="url(#arrow)"/>
+    <rect x="28" y="364" width="744" height="158" rx="12" fill="#e9eef8"/>
+    <text x="54" y="404" font-size="26" fill="#405f90">Stage B</text>
+    <text x="54" y="446" font-size="36" font-weight="700">Refine single mutations</text>
+    <text x="54" y="480" font-size="27">Candidate reranking + full prediction verification</text>
+    <text x="54" y="509" font-size="25" fill="#415a7a">40 rounds / 20 soft updates per proposal</text>
+    <path d="M400 530V564" stroke="#8aa0b0" stroke-width="2" marker-end="url(#arrow)"/>
+    <text x="400" y="606" text-anchor="middle" font-size="30">Binder sequence + structure + scores</text>
+  </g>
+</svg>

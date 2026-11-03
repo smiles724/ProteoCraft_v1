@@ -13,16 +13,13 @@ from proteocraft.hallucination.esmfold2_backend import (
     build_esm_verifier_result,
     minimally_align_binder_logits_to_sequence,
 )
-from proteocraft.hallucination.mcts_legacy import LegacyMCTSTree
+from proteocraft.hallucination.stage_a_tree import StageATree
 from proteocraft.hallucination.esmfold2_pipeline import (
-    run_esmfold2_best_of_n,
-    run_esmfold2_chunked_best_of_n,
     run_esmfold2_mcts_hallucination,
 )
 from proteocraft.hallucination.esmfold2_pipeline import (
     _ESMArtifactRecorder,
     _ESMFold2StageBMCTSTree,
-    _allocate_chunked_best_of_n_steps,
     _allocate_group_budgets,
     _deduplicate_actions_by_sequence,
     _stageb_proposal_call_specs,
@@ -292,311 +289,14 @@ class FakeHotspotVerifyBackend(FakeESMFold2Backend):
         )
 
 
-def test_chunked_best_of_n_splits_fixed_outer_budget_without_mcts(tmp_path):
-    backend = FakeESMFold2Backend()
-
-    best_seq, final_seq, losses = run_esmfold2_chunked_best_of_n(
-        backend=backend,
-        target_seq="TTTT",
-        L_binder=3,
-        best_of_n=4,
-        total_outer_steps=70,
-        init_binder_seq="AAA",
-        mutable_mask=[True, True, True],
-        seed=7,
-        artifact_dir=tmp_path,
-        esmfold2_logit_init_mode="official_exact",
-        esmfold2_soft_steps=3,
-    )
-
-    assert best_seq == final_seq
-    assert len(losses) == 4
-    assert _allocate_chunked_best_of_n_steps(70, 4) == [18, 18, 17, 17]
-    assert len(backend.continuous_calls) == 70
-    assert backend.propose_calls == []
-    assert backend.preview_calls == []
-    assert len(backend.verify_calls) <= 4
-    assert all(
-        call["track_confidence_override"] is False
-        for call in backend.continuous_calls
-    )
-    assert all(
-        call["soft_steps_override"] == 3
-        for call in backend.continuous_calls
-    )
-    assert all(
-        call["preserve_proposal_logits"] is True
-        for call in backend.continuous_calls
-    )
-
-    contract = json.loads(
-        (tmp_path / "chunked_best_of_n_config.json").read_text()
-    )
-    assert contract["outer_step_allocation"] == [18, 18, 17, 17]
-    assert contract["intermediate_verifier_selection"] is False
-    assert contract["mutation_candidate_branching"] is False
 
 
-def test_chunked_best_of_n_matches_verifier_budget_without_feedback(tmp_path):
-    class VerifierMatchedBackend(FakeESMFold2Backend):
-        def propose(self, **kwargs):
-            self.propose_calls.append(dict(kwargs))
-            logits_after = kwargs["proposal_logits"].detach().clone()
-            next_sequence = (
-                "AAY" if int(kwargs["global_step"]) == 0 else "AYY"
-            )
-            for position, amino_acid in enumerate(next_sequence):
-                logits_after[position, :] = -1.0
-                logits_after[position, AA_TO_ESM_IDX[amino_acid]] = 1.0
-            candidates = (
-                ["AAF", "AFF"]
-                if int(kwargs["global_step"]) == 0
-                else ["FYY", "YFY"]
-            )
-            return ESMFold2ProposalBatch(
-                sequences=candidates,
-                logits_after=logits_after,
-            )
-
-    backend = VerifierMatchedBackend()
-    best_seq, final_seq, losses = run_esmfold2_chunked_best_of_n(
-        backend=backend,
-        target_seq="TTTT",
-        L_binder=3,
-        best_of_n=2,
-        total_outer_steps=2,
-        init_binder_seq="AAA",
-        mutable_mask=[True, True, True],
-        seed=7,
-        artifact_dir=tmp_path,
-        esmfold2_logit_init_mode="official_exact",
-        esmfold2_soft_steps=3,
-        verifier_candidates_per_outer_step=2,
-        candidate_k_top=4,
-        candidate_temperature=1.0,
-        candidate_max_mutations_per_seq=3,
-    )
-
-    assert best_seq == final_seq == "AYY"
-    assert len(losses) == 2
-    assert len(backend.propose_calls) == 2
-    assert backend.continuous_calls == []
-    assert [call["global_step"] for call in backend.propose_calls] == [0, 1]
-    assert all(call["B_candidates"] == 2 for call in backend.propose_calls)
-    verified_sequences = [call[0] for call in backend.verify_calls]
-    assert "AAY" in verified_sequences
-    assert "AYY" in verified_sequences
-
-    summary = json.loads((tmp_path / "run_summary.json").read_text())
-    assert [
-        call["current_seq"]
-        for call in backend.propose_calls
-    ] == [
-        item["initial_sequence"]
-        for item in summary["trajectory_summaries"]
-    ]
-    assert summary["intermediate_verifier_selection"] is False
-    assert summary["mutation_candidate_branching"] is False
-    assert summary["verifier_feedback_to_trajectory"] is False
-    assert summary["verifier_candidates_per_outer_step"] == 2
-    assert summary["configured_full_verifier_budget"] == 6
-    assert summary["candidate_verification_attempts"] == 4
-    assert summary["actual_full_verifier_attempts"] == 6
 
 
-def test_chunked_best_of_n_can_follow_verifier_best_with_soft_anchor(tmp_path):
-    class VerifierGuidedBackend(FakeESMFold2Backend):
-        def __init__(self):
-            super().__init__()
-            self.scores.update(
-                {
-                    "AAY": 0.40,
-                    "AAF": 0.90,
-                    "AYY": 0.50,
-                    "AFF": 0.95,
-                }
-            )
-
-        def propose(self, **kwargs):
-            self.propose_calls.append(dict(kwargs))
-            logits_after = kwargs["proposal_logits"].detach().clone()
-            next_sequence = (
-                "AAY" if int(kwargs["global_step"]) == 0 else "AYY"
-            )
-            for position, amino_acid in enumerate(next_sequence):
-                logits_after[position, :] = -1.0
-                logits_after[position, AA_TO_ESM_IDX[amino_acid]] = 1.0
-            candidates = (
-                ["AAF"] if int(kwargs["global_step"]) == 0 else ["AFF"]
-            )
-            return ESMFold2ProposalBatch(
-                sequences=candidates,
-                logits_after=logits_after,
-            )
-
-    backend = VerifierGuidedBackend()
-    best_seq, final_seq, losses = run_esmfold2_chunked_best_of_n(
-        backend=backend,
-        target_seq="TTTT",
-        L_binder=3,
-        best_of_n=1,
-        total_outer_steps=2,
-        init_binder_seq="AAA",
-        mutable_mask=[True, True, True],
-        seed=7,
-        artifact_dir=tmp_path,
-        esmfold2_logit_init_mode="official_exact",
-        esmfold2_soft_steps=3,
-        verifier_candidates_per_outer_step=2,
-        continuation_policy="verifier_best",
-        candidate_k_top=4,
-        candidate_temperature=1.0,
-        candidate_max_mutations_per_seq=3,
-    )
-
-    assert best_seq == final_seq == "AFF"
-    assert len(losses) == 1
-    assert len(backend.propose_calls) == 2
-    assert backend.propose_calls[1]["current_seq"] == "AAF"
-    second_step_logits = backend.propose_calls[1]["proposal_logits"]
-    second_step_argmax = "".join(
-        ESM_AA_ORDER[int(index)]
-        for index in second_step_logits.argmax(dim=-1).tolist()
-    )
-    assert second_step_argmax == "AAF"
-
-    contract = json.loads(
-        (tmp_path / "chunked_best_of_n_config.json").read_text()
-    )
-    assert contract["schema_version"] == 3
-    assert contract["continuation_policy"] == "verifier_best"
-    assert contract["intermediate_verifier_selection"] is True
-    assert contract["verifier_feedback_to_trajectory"] is True
-    assert contract["logits_carry_policy"] == "verifier_best_soft_anchor"
-
-    summary = json.loads((tmp_path / "run_summary.json").read_text())
-    assert summary["continuation_policy"] == "verifier_best"
-    assert summary["verifier_feedback_to_trajectory"] is True
-    assert summary["trajectory_summaries"][0]["final_sequence"] == "AFF"
-
-    outer_steps = [
-        json.loads(line)
-        for line in (
-            tmp_path
-            / "chunked_best_of_n"
-            / "trajectory_000"
-            / "outer_steps.jsonl"
-        ).read_text().splitlines()
-    ]
-    assert outer_steps[0]["raw_argmax_sequence"] == "AAY"
-    assert outer_steps[0]["sequence"] == "AAF"
-    assert outer_steps[0]["verifier_feedback_applied"] is True
 
 
-def test_chunked_best_of_n_verifier_best_requires_verified_candidates(tmp_path):
-    with pytest.raises(
-        ValueError,
-        match="requires at least one verified candidate",
-    ):
-        run_esmfold2_chunked_best_of_n(
-            backend=FakeESMFold2Backend(),
-            target_seq="TTTT",
-            L_binder=3,
-            best_of_n=1,
-            total_outer_steps=1,
-            init_binder_seq="AAA",
-            mutable_mask=[True, True, True],
-            artifact_dir=tmp_path,
-            continuation_policy="verifier_best",
-            verifier_candidates_per_outer_step=0,
-        )
 
 
-def test_chunked_best_of_n_keeps_verifier_coordinates_and_features_paired(
-    tmp_path,
-):
-    class OneStepBackend(FakeESMFold2Backend):
-        def __init__(self):
-            super().__init__()
-            self.config = SimpleNamespace(one_step_diffusion_enabled=True)
-            self.reference_feature_calls = []
-
-        def prepare_verifier_reference_features(
-            self,
-            *,
-            binder_seq,
-            target_seq,
-            seed=None,
-        ):
-            self.reference_feature_calls.append(
-                (binder_seq, target_seq, seed)
-            )
-            return {"layout_id": torch.tensor([17])}
-
-        def propose(
-            self,
-            *,
-            reference_coordinates=None,
-            reference_features=None,
-            **kwargs,
-        ):
-            self.propose_calls.append(
-                {
-                    **kwargs,
-                    "reference_coordinates": reference_coordinates,
-                    "reference_features": reference_features,
-                }
-            )
-            logits_after = kwargs["proposal_logits"].detach().clone()
-            return ESMFold2ProposalBatch(
-                sequences=["AAY"],
-                logits_after=logits_after,
-            )
-
-    backend = OneStepBackend()
-    run_esmfold2_chunked_best_of_n(
-        backend=backend,
-        target_seq="TTTT",
-        L_binder=3,
-        best_of_n=1,
-        total_outer_steps=2,
-        init_binder_seq="AAA",
-        mutable_mask=[True, True, True],
-        seed=7,
-        artifact_dir=tmp_path,
-        esmfold2_logit_init_mode="official_exact",
-        esmfold2_soft_steps=3,
-        verifier_candidates_per_outer_step=1,
-    )
-
-    assert len(backend.reference_feature_calls) == 1
-    assert backend.reference_feature_calls[0][0] == (
-        backend.propose_calls[0]["current_seq"]
-    )
-    assert backend.reference_feature_calls[0][1] == "TTTT"
-    assert isinstance(backend.reference_feature_calls[0][2], int)
-    assert len(backend.propose_calls) == 2
-    assert all(
-        call["reference_coordinates"] is not None
-        for call in backend.propose_calls
-    )
-    assert all(
-        torch.equal(
-            call["reference_features"]["layout_id"],
-            torch.tensor([17]),
-        )
-        for call in backend.propose_calls
-    )
-    assert backend.propose_calls[0]["reference_features"] is not (
-        backend.propose_calls[1]["reference_features"]
-    )
-    contract = json.loads(
-        (tmp_path / "chunked_best_of_n_config.json").read_text()
-    )
-    assert contract["schema_version"] == 2
-    assert contract["reference_coordinate_policy"] == (
-        "initial_full_verifier_coordinates_and_features_fixed"
-    )
 
 
 def test_stageb_group_budget_keeps_every_repair_group_represented():
@@ -1277,7 +977,7 @@ def test_esmfold2_stagea_pipeline_uses_backend_for_verify_and_proposal():
 
 
 def test_stagea_legacy_tree_selects_lower_average_loss_path():
-    tree = LegacyMCTSTree(C=0.0)
+    tree = StageATree(C=0.0)
     low_loss = tree.add_root_node(
         sequence="AAA",
         logits=torch.zeros(3, 20),
@@ -1352,7 +1052,7 @@ def test_stagea_argmax_child_preserves_raw_logits_and_only_two_children_enter_tr
         T_sample=1.0,
         max_mutations_per_seq=3,
         seed=7,
-        mcts_strategy="stage_a_only",
+        mcts_strategy="two_stage",
         mcts_handoff_top_k=2,
         esmfold2_stagea_tree_children=2,
         esmfold2_stagea_root_selection_mode="global_ucb",
@@ -1431,7 +1131,7 @@ def test_stagea_uses_one_run_level_verifier_seed_for_all_candidates():
         T_sample=1.0,
         max_mutations_per_seq=1,
         seed=7,
-        mcts_strategy="stage_a_only",
+        mcts_strategy="two_stage",
         esmfold2_stagea_paired_verifier_seed=True,
     )
 
@@ -1455,7 +1155,7 @@ def test_stagea_cumulative_annealing_follows_selected_node_soft_depth(tmp_path):
         max_mutations_per_seq=1,
         seed=7,
         mcts_C=0.0,
-        mcts_strategy="stage_a_only",
+        mcts_strategy="two_stage",
         esmfold2_stagea_soft_steps=30,
         esmfold2_stagea_cumulative_annealing=True,
         esmfold2_stagea_annealing_horizon=150,
@@ -1499,7 +1199,7 @@ def test_stagea_defaults_to_independent_outer_step_annealing():
         max_mutations_per_seq=1,
         seed=7,
         mcts_C=0.0,
-        mcts_strategy="stage_a_only",
+        mcts_strategy="two_stage",
         esmfold2_stagea_soft_steps=30,
         esmfold2_stagea_preserve_soft_state=True,
         esmfold2_stagea_handoff_checkpoint_interval=0,
@@ -1515,281 +1215,16 @@ def test_stagea_defaults_to_independent_outer_step_annealing():
     ]
 
 
-def test_raw_lineage_stagea_keeps_logits_continuous_and_defers_verifier():
-    class RawLineageBackend(FakeESMFold2Backend):
-        def continuous_design(self, **kwargs):
-            self.continuous_calls.append(dict(kwargs))
-            logits = kwargs["proposal_logits"].detach().clone()
-            chunk_index = kwargs["global_step"] // kwargs["soft_steps_override"]
-            next_sequence = "AAY" if chunk_index == 0 else "AYY"
-            for position, amino_acid in enumerate(next_sequence):
-                logits[position, :] = -1.0
-                logits[position, AA_TO_ESM_IDX[amino_acid]] = 1.0
-            confidence_candidates = (
-                [
-                    {
-                        "sequence": "AAF",
-                        "local_step": 1,
-                        "confidence_score": 0.7,
-                        "confidence_source": "pair_chain_iptm",
-                    }
-                ]
-                if kwargs["track_confidence_override"]
-                else []
-            )
-            return ESMFold2ProposalBatch(
-                sequences=[next_sequence],
-                logits_after=logits,
-                confidence_candidates=confidence_candidates,
-            )
-
-    backend = RawLineageBackend()
-    best_seq, final_seq, losses = run_esmfold2_mcts_hallucination(
-        backend=backend,
-        target_seq="TTTT",
-        L_binder=3,
-        N_steps=2,
-        num_beams=1,
-        init_binder_seq="AAA",
-        K_top=4,
-        B_candidates=2,
-        T_sample=1.0,
-        max_mutations_per_seq=1,
-        seed=7,
-        mcts_strategy="raw_lineage_stage_a",
-        esmfold2_stagea_soft_steps=3,
-        esmfold2_raw_lineage_annealing_horizon=6,
-        esmfold2_stagea_paired_verifier_seed=True,
-        esmfold2_stagea_verifier_seed=12345,
-    )
-
-    assert [call["current_seq"] for call in backend.continuous_calls] == [
-        "AAA",
-        "AAY",
-    ]
-    assert [call["global_step"] for call in backend.continuous_calls] == [0, 3]
-    assert [call["temperature_step_offset"] for call in backend.continuous_calls] == [
-        0,
-        3,
-    ]
-    assert all(
-        call["temperature_total_steps"] == 6
-        for call in backend.continuous_calls
-    )
-    assert [call["track_confidence_override"] for call in backend.continuous_calls] == [
-        False,
-        True,
-    ]
-    assert all(call["seed"] == 7 for call in backend.continuous_calls)
-    assert [call[0] for call in backend.verify_calls] == ["AAA", "AAF", "AYY"]
-    assert {call[2] for call in backend.verify_calls} == {12345}
-    assert best_seq == final_seq == "AYY"
-    assert losses[-1] == pytest.approx(0.10)
 
 
-def test_esmfold2_continuous_stagea_designs_once_then_verifies_argmax_sequence():
-    backend = FakeESMFold2Backend()
-
-    best_seq, final_seq, losses = run_esmfold2_mcts_hallucination(
-        backend=backend,
-        target_seq="TTTT",
-        L_binder=3,
-        N_steps=150,
-        num_beams=1,
-        init_binder_seq="AAA",
-        K_top=4,
-        B_candidates=2,
-        T_sample=1.0,
-        max_mutations_per_seq=1,
-        seed=7,
-        mcts_strategy="continuous_stage_a",
-    )
-
-    assert best_seq == "AYY"
-    assert final_seq == "AYY"
-    assert losses == [pytest.approx(0.10)]
-    assert [call[0] for call in backend.verify_calls] == ["AAA", "AYY"]
-    assert [call["current_seq"] for call in backend.continuous_calls] == ["AAA"]
-    assert backend.propose_calls == []
-    assert backend.preview_calls == []
 
 
-def test_esmfold2_best_of_n_runs_independent_continuous_trajectories(tmp_path):
-    backend = FakeESMFold2Backend()
-
-    best_seq, final_seq, losses = run_esmfold2_best_of_n(
-        backend=backend,
-        target_seq="TTTT",
-        L_binder=3,
-        best_of_n=3,
-        init_binder_seq="AAA",
-        mutable_mask=[True, True, True],
-        seed=7,
-        artifact_dir=tmp_path,
-        esmfold2_logit_init_mode="official_exact",
-        esmfold2_soft_steps=11,
-        pass_loss_threshold=0.2,
-    )
-
-    assert best_seq == "AYY"
-    assert final_seq == "AYY"
-    assert losses == [pytest.approx(0.10)] * 3
-    assert len(backend.continuous_calls) == 3
-    assert len({call["seed"] for call in backend.continuous_calls}) == 3
-    assert all(call["track_confidence_override"] is True for call in backend.continuous_calls)
-    assert all(call["soft_steps_override"] == 11 for call in backend.continuous_calls)
-    assert backend.propose_calls == []
-    assert backend.preview_calls == []
-
-    summary = json.loads((tmp_path / "run_summary.json").read_text())
-    assert summary["strategy"] == "best_of_n"
-    assert summary["best_of_n"] == 3
-    assert summary["soft_steps_per_trajectory"] == 11
-    assert summary["passing_trajectory_count"] == 3
-    assert summary["pass_at_n"] is True
-    assert len(summary["trajectory_summaries"]) == 3
-    for trajectory_index in range(3):
-        trajectory_dir = (
-            tmp_path / "best_of_n" / f"trajectory_{trajectory_index:03d}"
-        )
-        assert (trajectory_dir / "initial_logits.pt").exists()
-        assert (trajectory_dir / "final_logits.pt").exists()
-        assert (trajectory_dir / "trajectory_summary.json").exists()
 
 
-def test_esmfold2_best_of_n_resumes_completed_trajectories(tmp_path):
-    backend = FakeESMFold2Backend()
-    kwargs = {
-        "backend": backend,
-        "target_seq": "TTTT",
-        "L_binder": 3,
-        "best_of_n": 2,
-        "init_binder_seq": "AAA",
-        "mutable_mask": [True, True, True],
-        "seed": 7,
-        "artifact_dir": tmp_path,
-        "esmfold2_logit_init_mode": "official_exact",
-        "esmfold2_soft_steps": 2,
-    }
-
-    first = run_esmfold2_best_of_n(**kwargs)
-    first_continuous_count = len(backend.continuous_calls)
-    second = run_esmfold2_best_of_n(**kwargs)
-
-    assert first == second
-    assert first_continuous_count == 2
-    assert len(backend.continuous_calls) == first_continuous_count
-    assert len((tmp_path / "trajectory.jsonl").read_text().splitlines()) == 2
 
 
-@pytest.mark.parametrize(
-    ("target_seq", "mutable_mask"),
-    [
-        ("TTTT", [True, True, True]),
-        (["AA", "BB"], [False, True, False]),
-        (["AA", "SS", "SS"], [False, True, False]),
-    ],
-)
-def test_esmfold2_best_of_n_supports_denovo_tcr_and_cdr_state_contracts(
-    target_seq,
-    mutable_mask,
-):
-    backend = FakeESMFold2Backend()
-
-    best_seq, _, _ = run_esmfold2_best_of_n(
-        backend=backend,
-        target_seq=target_seq,
-        L_binder=3,
-        best_of_n=2,
-        init_binder_seq="AAA",
-        mutable_mask=mutable_mask,
-        seed=13,
-        esmfold2_logit_init_mode="official_exact",
-        esmfold2_soft_steps=2,
-    )
-
-    assert len(backend.continuous_calls) == 2
-    assert all(call["target_seq"] == target_seq for call in backend.continuous_calls)
-    assert all(call["mutable_mask"] == mutable_mask for call in backend.continuous_calls)
-    assert all(
-        is_mutable or best_seq[index] == "A"
-        for index, is_mutable in enumerate(mutable_mask)
-    )
 
 
-def test_best_of_n_uses_exact_initial_logits_and_reference_coordinates(
-    tmp_path,
-):
-    class OneStepBackend(FakeESMFold2Backend):
-        def __init__(self):
-            super().__init__()
-            self.config = SimpleNamespace(one_step_diffusion_enabled=True)
-
-        def continuous_design(
-            self,
-            *,
-            reference_coordinates=None,
-            **kwargs,
-        ):
-            batch = super().continuous_design(**kwargs)
-            self.continuous_calls[-1]["reference_coordinates"] = (
-                reference_coordinates.detach().clone()
-                if reference_coordinates is not None
-                else None
-            )
-            return batch
-
-    checkpoint_root = tmp_path / "shared_initial_logits"
-    expected_logits = []
-    expected_sequences = ("AYY", "FYA")
-    for trajectory_index, sequence in enumerate(expected_sequences):
-        trajectory_dir = (
-            checkpoint_root
-            / "best_of_n"
-            / f"trajectory_{trajectory_index:03d}"
-        )
-        trajectory_dir.mkdir(parents=True)
-        logits = torch.full((3, len(ESM_AA_ORDER)), -1.0)
-        for position, amino_acid in enumerate(sequence):
-            logits[position, AA_TO_ESM_IDX[amino_acid]] = 1.0
-        torch.save(
-            {
-                "sequence": sequence,
-                "sequence_hash": hashlib.sha256(
-                    sequence.encode("utf-8")
-                ).hexdigest()[:16],
-                "logits": logits,
-            },
-            trajectory_dir / "initial_logits.pt",
-        )
-        expected_logits.append(logits)
-
-    backend = OneStepBackend()
-    run_esmfold2_best_of_n(
-        backend=backend,
-        target_seq="TTTT",
-        L_binder=3,
-        best_of_n=2,
-        mutable_mask=[True, True, True],
-        seed=13,
-        artifact_dir=tmp_path / "artifacts",
-        esmfold2_initial_logits_checkpoint=checkpoint_root,
-        esmfold2_soft_steps=2,
-        verifier_seed=1234,
-    )
-
-    assert [call["current_seq"] for call in backend.continuous_calls] == list(
-        expected_sequences
-    )
-    assert all(
-        torch.equal(call["proposal_logits"], logits)
-        for call, logits in zip(backend.continuous_calls, expected_logits)
-    )
-    assert all(
-        call["reference_coordinates"] is not None
-        for call in backend.continuous_calls
-    )
-    assert all(seed == 1234 for _, _, seed in backend.verify_calls)
 
 
 def test_esmfold2_pipeline_propagates_hotspot_to_proposal_and_preview_rerank():
@@ -1837,7 +1272,7 @@ def test_esmfold2_pipeline_propagates_hotspots_to_verify_when_supported():
         T_sample=1.0,
         max_mutations_per_seq=1,
         seed=7,
-        mcts_strategy="stage_a_only",
+        mcts_strategy="two_stage",
         hotspot_params=hotspot_params,
     )
 
@@ -1845,37 +1280,6 @@ def test_esmfold2_pipeline_propagates_hotspots_to_verify_when_supported():
     assert all(call == hotspot_params for call in backend.hotspot_verify_calls)
 
 
-def test_esmfold2_pipeline_propagates_hotspot_to_continuous_and_final_polish():
-    hotspot_params = {"target_hotspot_concat_indices": [0]}
-    continuous_backend = FakeESMFold2Backend()
-
-    run_esmfold2_mcts_hallucination(
-        backend=continuous_backend,
-        target_seq="TTTT",
-        L_binder=3,
-        N_steps=1,
-        num_beams=1,
-        init_binder_seq="AAA",
-        B_candidates=1,
-        mcts_strategy="continuous_stage_a",
-        hotspot_params=hotspot_params,
-    )
-    assert continuous_backend.continuous_calls[0]["hotspot_params"] == hotspot_params
-
-    polish_backend = FakeESMFold2Backend()
-    run_esmfold2_mcts_hallucination(
-        backend=polish_backend,
-        target_seq="TTTT",
-        L_binder=3,
-        N_steps=1,
-        num_beams=1,
-        init_binder_seq="AAA",
-        B_candidates=1,
-        mcts_strategy="stage_a_only",
-        esmfold2_final_polish=True,
-        hotspot_params=hotspot_params,
-    )
-    assert polish_backend.continuous_calls[0]["hotspot_params"] == hotspot_params
 
 
 def test_esmfold2_pipeline_rejects_positive_backend_weight_without_hotspots():
@@ -1919,29 +1323,9 @@ def test_esmfold2_pipeline_rejects_positive_hotspot_verify_weight_without_hotspo
 
 
 def test_esmfold2_official_free_roots_keep_unanchored_mutable_logits():
-    backend = FakeESMFold2Backend()
-
-    run_esmfold2_mcts_hallucination(
-        backend=backend,
-        target_seq="TTTT",
-        L_binder=3,
-        N_steps=150,
-        num_beams=1,
-        init_binder_seq=None,
-        K_top=4,
-        B_candidates=2,
-        T_sample=1.0,
-        max_mutations_per_seq=1,
-        seed=7,
-        mcts_strategy="continuous_stage_a",
-        esmfold2_logit_init_mode="official_free",
-    )
-
-    assert len(backend.continuous_calls) == 1
-    current_seq = backend.continuous_calls[0]["current_seq"]
-    proposal_logits = backend.continuous_calls[0]["proposal_logits"]
-    assert proposal_logits is not None
-    assert len(current_seq) == 3
+    [(current_seq, proposal_logits)] = _make_phase0_seed_states(
+        None, num_beams=1, L_binder=3, seed=7,
+        mutable_mask=[True, True, True], logit_init_mode="official_free")
     for pos, aa in enumerate(current_seq):
         aa_idx = AA_TO_ESM_IDX[aa]
         assert proposal_logits[pos, aa_idx].item() < 0.5
@@ -1991,7 +1375,7 @@ def test_official_exact_phase0_handoff_preserves_free_logits(tmp_path):
         N_steps=0,
         num_beams=1,
         seed=42,
-        mcts_strategy="stage_a_only",
+        mcts_strategy="two_stage",
         esmfold2_logit_init_mode="official_exact",
         artifact_dir=artifact_dir,
     )
@@ -2101,7 +1485,7 @@ def test_mcts_uses_loaded_initial_logits_for_first_proposal(tmp_path):
         T_sample=1.0,
         max_mutations_per_seq=1,
         seed=7,
-        mcts_strategy="stage_a_only",
+        mcts_strategy="two_stage",
         esmfold2_initial_logits_checkpoint=checkpoint,
     )
 
@@ -2110,99 +1494,15 @@ def test_mcts_uses_loaded_initial_logits_for_first_proposal(tmp_path):
 
 
 def test_esmfold2_official_free_scaffold_roots_anchor_only_fixed_positions():
-    class SameLengthContinuousBackend(FakeESMFold2Backend):
-        def continuous_design(self, **kwargs):
-            self.continuous_calls.append(
-                {
-                    "current_seq": kwargs["current_seq"],
-                    "target_seq": kwargs["target_seq"],
-                    "global_step": kwargs["global_step"],
-                    "seed": kwargs.get("seed"),
-                    "mutable_mask": kwargs.get("mutable_mask"),
-                    "proposal_logits": kwargs["proposal_logits"].detach().clone()
-                    if kwargs.get("proposal_logits") is not None else None,
-                }
-            )
-            return ESMFold2ProposalBatch(sequences=[kwargs["current_seq"]])
-
-    backend = SameLengthContinuousBackend()
-
-    run_esmfold2_mcts_hallucination(
-        backend=backend,
-        target_seq="TTTT",
-        L_binder=4,
-        N_steps=150,
-        num_beams=1,
-        init_binder_seq="AAAA",
-        K_top=4,
-        B_candidates=2,
-        T_sample=1.0,
-        max_mutations_per_seq=1,
-        seed=7,
-        mutable_mask=[False, True, True, False],
-        mcts_strategy="continuous_stage_a",
-        esmfold2_logit_init_mode="official_free",
-    )
-
-    assert len(backend.continuous_calls) == 1
-    current_seq = backend.continuous_calls[0]["current_seq"]
-    proposal_logits = backend.continuous_calls[0]["proposal_logits"]
-    assert proposal_logits is not None
-    assert current_seq[0] == "A"
-    assert current_seq[3] == "A"
-
-    fixed_idx = AA_TO_ESM_IDX["A"]
-    assert proposal_logits[0, fixed_idx].item() >= 9.0
-    assert proposal_logits[3, fixed_idx].item() >= 9.0
-    for pos in (1, 2):
-        aa_idx = AA_TO_ESM_IDX[current_seq[pos]]
-        assert torch.argmax(proposal_logits[pos]).item() == aa_idx
-        assert proposal_logits[pos, aa_idx].item() < 0.5
+    [(sequence, logits)] = _make_phase0_seed_states(
+        "AAA", num_beams=1, L_binder=3, seed=7,
+        mutable_mask=[False, True, False], logit_init_mode="official_free")
+    assert sequence[0] == sequence[2] == "A"
+    for pos in (0, 2):
+        assert logits[pos, AA_TO_ESM_IDX["A"]].item() == pytest.approx(10.0)
+    assert logits[1, torch.argmax(logits[1])].item() < 0.5
 
 
-def test_esmfold2_continuous_stagea_verifies_tracked_confidence_candidates():
-    class ConfidenceContinuousBackend(FakeESMFold2Backend):
-        def continuous_design(self, **kwargs):
-            super().continuous_design(**kwargs)
-            return ESMFold2ProposalBatch(
-                sequences=["AAF"],
-                confidence_candidates=[
-                    {
-                        "sequence": "AAY",
-                        "local_step": 140,
-                        "confidence_score": 0.80,
-                        "confidence_source": "iptm",
-                    },
-                    {
-                        "sequence": "AYY",
-                        "local_step": 145,
-                        "confidence_score": 0.70,
-                        "confidence_source": "iptm",
-                    },
-                ],
-            )
-
-    backend = ConfidenceContinuousBackend()
-
-    best_seq, final_seq, losses = run_esmfold2_mcts_hallucination(
-        backend=backend,
-        target_seq="TTTT",
-        L_binder=3,
-        N_steps=150,
-        num_beams=1,
-        init_binder_seq="AAA",
-        K_top=4,
-        B_candidates=2,
-        T_sample=1.0,
-        max_mutations_per_seq=1,
-        seed=7,
-        mcts_strategy="continuous_stage_a",
-    )
-
-    assert best_seq == "AYY"
-    assert final_seq == "AYY"
-    assert losses == [pytest.approx(0.10)]
-    assert [call[0] for call in backend.verify_calls] == ["AAA", "AAY", "AYY", "AAF"]
 
 
 def test_esmfold2_stagea_ignores_tracked_confidence_candidate_during_normal_search():
@@ -2235,7 +1535,7 @@ def test_esmfold2_stagea_ignores_tracked_confidence_candidate_during_normal_sear
         T_sample=1.0,
         max_mutations_per_seq=1,
         seed=7,
-        mcts_strategy="stage_a_only",
+        mcts_strategy="two_stage",
     )
 
     assert best_seq == "AAF"
@@ -2287,7 +1587,7 @@ def test_esmfold2_stagea_does_not_use_tracked_confidence_candidates_without_fina
         T_sample=1.0,
         max_mutations_per_seq=1,
         seed=7,
-        mcts_strategy="stage_a_only",
+        mcts_strategy="two_stage",
     )
 
     assert best_seq == "AAA"
@@ -2297,175 +1597,13 @@ def test_esmfold2_stagea_does_not_use_tracked_confidence_candidates_without_fina
     assert backend.propose_calls[0]["track_confidence_override"] is False
 
 
-def test_esmfold2_final_polish_is_the_only_stage_using_tracked_confidence_candidates():
-    class ConfidenceProposalAndPolishBackend(FakeESMFold2Backend):
-        def propose(self, **kwargs):
-            super().propose(**kwargs)
-            return ESMFold2ProposalBatch(
-                sequences=["AAF"],
-                confidence_candidates=[
-                    {
-                        "sequence": "AYY",
-                        "local_step": 28,
-                        "confidence_score": 0.90,
-                        "confidence_source": "pair_chain_iptm",
-                    }
-                ],
-            )
-
-        def continuous_design(self, **kwargs):
-            super().continuous_design(**kwargs)
-            return ESMFold2ProposalBatch(
-                sequences=["AAF"],
-                confidence_candidates=[
-                    {
-                        "sequence": "AYY",
-                        "local_step": 28,
-                        "confidence_score": 0.90,
-                        "confidence_source": "pair_chain_iptm",
-                    }
-                ],
-            )
-
-    backend = ConfidenceProposalAndPolishBackend()
-
-    best_seq, final_seq, losses = run_esmfold2_mcts_hallucination(
-        backend=backend,
-        target_seq="TTTT",
-        L_binder=3,
-        N_steps=1,
-        num_beams=1,
-        init_binder_seq="AAA",
-        K_top=4,
-        B_candidates=1,
-        T_sample=1.0,
-        max_mutations_per_seq=1,
-        seed=7,
-        mcts_strategy="stage_a_only",
-        esmfold2_final_polish=True,
-    )
-
-    assert best_seq == "AYY"
-    assert final_seq == "AYY"
-    assert losses == [pytest.approx(0.60), pytest.approx(0.10)]
-    assert [call[0] for call in backend.verify_calls] == ["AAA", "AAF", "AYY"]
-    assert backend.propose_calls[0]["track_confidence_override"] is False
-    assert backend.continuous_calls[0]["current_seq"] == "AAF"
-    assert backend.continuous_calls[0]["track_confidence_override"] is True
 
 
-def test_esmfold2_final_polish_keeps_global_best_when_polish_is_worse(tmp_path):
-    class WorsePolishBackend(FakeESMFold2Backend):
-        def continuous_design(self, **kwargs):
-            super().continuous_design(**kwargs)
-            return ESMFold2ProposalBatch(
-                sequences=["AAF"],
-                confidence_candidates=[
-                    {
-                        "sequence": "AAF",
-                        "local_step": 28,
-                        "confidence_score": 0.40,
-                        "confidence_source": "pair_chain_iptm",
-                    }
-                ],
-            )
-
-    backend = WorsePolishBackend()
-    artifact_dir = tmp_path / "final_polish_worse"
-
-    best_seq, final_seq, losses = run_esmfold2_mcts_hallucination(
-        backend=backend,
-        target_seq="TTTT",
-        L_binder=3,
-        N_steps=2,
-        num_beams=1,
-        init_binder_seq="AAA",
-        K_top=4,
-        B_candidates=2,
-        T_sample=1.0,
-        max_mutations_per_seq=1,
-        seed=7,
-        mcts_strategy="stage_a_only",
-        esmfold2_final_polish=True,
-        artifact_dir=artifact_dir,
-    )
-
-    assert best_seq == "AYY"
-    assert final_seq == "AYY"
-    assert losses[-1] == pytest.approx(0.10)
-
-    summary = json.loads((artifact_dir / "run_summary.json").read_text())
-    assert summary["best_sequence"] == "AYY"
-    assert summary["final_sequence"] == "AYY"
-
-    trajectory = [json.loads(line) for line in (artifact_dir / "trajectory.jsonl").read_text().splitlines()]
-    final_polish = trajectory[-1]
-    assert final_polish["stage"] == "final_polish"
-    assert final_polish["selected_sequence"] == "AYY"
-    assert final_polish["round_best_loss"] == pytest.approx(0.60)
-    assert final_polish["global_best_loss"] == pytest.approx(0.10)
-    assert final_polish["best_sequence"] == "AYY"
 
 
-def test_esmfold2_final_polish_starts_from_global_best_logits():
-    class GlobalBestLogitsBackend(FakeESMFold2Backend):
-        def propose(self, **kwargs):
-            proposal_logits = kwargs["proposal_logits"]
-            updated = proposal_logits.detach().clone()
-            updated[1, AA_TO_ESM_IDX["F"]] = 7.0
-            updated[2, AA_TO_ESM_IDX["Y"]] = 5.0
-            self.propose_calls.append(
-                {
-                    "current_seq": kwargs["current_seq"],
-                    "proposal_logits": proposal_logits.detach().clone(),
-                    "track_confidence_override": kwargs.get("track_confidence_override"),
-                }
-            )
-            return ESMFold2ProposalBatch(
-                sequences=["AYY"],
-                logits_after=updated,
-            )
-
-        def continuous_design(self, **kwargs):
-            proposal_logits = kwargs["proposal_logits"]
-            self.continuous_calls.append(
-                {
-                    "current_seq": kwargs["current_seq"],
-                    "proposal_logits": proposal_logits.detach().clone(),
-                    "track_confidence_override": kwargs.get("track_confidence_override"),
-                }
-            )
-            return ESMFold2ProposalBatch(
-                sequences=["AYY"],
-                logits_after=proposal_logits.detach().clone(),
-            )
-
-    backend = GlobalBestLogitsBackend()
-
-    best_seq, final_seq, losses = run_esmfold2_mcts_hallucination(
-        backend=backend,
-        target_seq="TTTT",
-        L_binder=3,
-        N_steps=1,
-        num_beams=1,
-        init_binder_seq="AAA",
-        K_top=4,
-        B_candidates=1,
-        T_sample=1.0,
-        max_mutations_per_seq=1,
-        seed=7,
-        mcts_strategy="stage_a_only",
-        esmfold2_final_polish=True,
-    )
-
-    assert best_seq == final_seq == "AYY"
-    assert losses[-1] == pytest.approx(0.10)
-    polish_logits = backend.continuous_calls[0]["proposal_logits"]
-    assert polish_logits[1, AA_TO_ESM_IDX["F"]].item() == pytest.approx(7.0)
-    assert polish_logits[2, AA_TO_ESM_IDX["Y"]].item() >= 5.0
 
 
-def test_esmfold2_stage_a_only_strategy_never_enters_stageb():
+def test_budget_ending_in_stage_a_never_enters_stageb():
     backend = FakeESMFold2Backend()
 
     best_seq, final_seq, losses = run_esmfold2_mcts_hallucination(
@@ -2480,9 +1618,9 @@ def test_esmfold2_stage_a_only_strategy_never_enters_stageb():
         T_sample=1.0,
         max_mutations_per_seq=1,
         seed=7,
-        mcts_strategy="stage_a_only",
-        mcts_bootstrap_steps=1,
-        mcts_bootstrap_max_steps=1,
+        mcts_strategy="two_stage",
+        mcts_bootstrap_steps=2,
+        mcts_bootstrap_max_steps=2,
     )
 
     assert best_seq == "AYY"
@@ -2642,7 +1780,7 @@ def test_esmfold2_stagea_defaults_to_positive_score_half_fraction_and_argmax():
         K_top=4,
         B_candidates=2,
         seed=7,
-        mcts_strategy="stage_a_only",
+        mcts_strategy="two_stage",
     )
 
     proposal = backend.propose_calls[0]
@@ -2663,7 +1801,7 @@ def test_esmfold2_positive_score_still_requires_a_mutation_fraction():
             init_binder_seq="AAAA",
             esmfold2_stagea_mutation_fraction=None,
             esmfold2_stagea_candidate_strategy="positive_score",
-            mcts_strategy="stage_a_only",
+            mcts_strategy="two_stage",
         )
 
 
@@ -2774,7 +1912,7 @@ def test_esmfold2_pipeline_persists_node_local_logits_between_stagea_visits():
         T_sample=1.0,
         max_mutations_per_seq=1,
         seed=7,
-        mcts_strategy="stage_a_only",
+        mcts_strategy="two_stage",
     )
 
     assert [call["current_seq"] for call in backend.propose_calls] == ["AAA", "AAY"]
@@ -2883,6 +2021,8 @@ def test_esmfold2_pipeline_writes_structured_step_artifacts(tmp_path):
     summary = json.loads(summary_path.read_text())
 
     assert [event["stage"] for event in trajectory] == ["phase0", "stage_a", "stage_b"]
+    # Both Stage B budget iterations count even when one has no available action.
+    assert len(losses) == summary["n_steps"] == 3
     assert trajectory[1]["candidate_count"] == 2
     assert trajectory[2]["primary_action_group"] == "interface_formation"
     assert trajectory[2]["selected_group_counts"] == {"interface_formation": 1}
@@ -2914,6 +2054,38 @@ def test_esmfold2_pipeline_writes_structured_step_artifacts(tmp_path):
     assert summary["best_loss"] == pytest.approx(0.10)
 
 
+@pytest.mark.parametrize("n_steps", [1, 2])
+def test_final_checkpoint_matches_selected_verifier_result_without_improvement(tmp_path, n_steps):
+    class NoMutationBackend(FakeESMFold2Backend):
+        def propose(self, **kwargs):
+            return ESMFold2ProposalBatch(sequences=[])
+
+        def verify(self, *, binder_seq, target_seq, seed=None, hotspot_params=None):
+            self.scores[binder_seq] = 0.9 - 0.1 * len(self.verify_calls)
+            result = super().verify(binder_seq=binder_seq, target_seq=target_seq, seed=seed)
+            result.summary_confidence["mmcif"] = f"data_verify_{len(self.verify_calls)}\n#\n"
+            self.last_result = result
+            return result
+
+    backend = NoMutationBackend()
+    artifact_dir = tmp_path / "artifacts"
+    best, final, losses = run_esmfold2_mcts_hallucination(
+        backend=backend, target_seq="ACDE", L_binder=3, N_steps=n_steps,
+        num_beams=1, init_binder_seq="AAA", mcts_bootstrap_steps=1,
+        mcts_bootstrap_max_steps=1, artifact_dir=artifact_dir,
+    )
+    summary = json.loads((artifact_dir / "run_summary.json").read_text())
+    step_name = f"step_{n_steps:04d}"
+    checkpoint_dir = artifact_dir / "checkpoints" / "final" / step_name
+    metadata = json.loads((checkpoint_dir / f"{step_name}_best_meta.json").read_text())
+    assert best == final == metadata["binder_seq"] == "AAA"
+    assert metadata["total_loss"] == summary["best_loss"] == losses[-1]
+    assert metadata["summary_confidence"]["pair_chain_iptm"] == backend.last_result.summary_confidence["pair_chain_iptm"]
+    assert (checkpoint_dir / metadata["structure_file"]).read_text() == backend.last_result.summary_confidence["mmcif"]
+    assert len(backend.verify_calls) == n_steps
+    assert len(losses) == n_steps
+
+
 def test_stagea_handoff_checkpoint_is_saved_and_resumes_directly_into_stageb(tmp_path):
     stagea_backend = FakeESMFold2Backend()
     source_artifacts = tmp_path / "stagea_source"
@@ -2928,7 +2100,7 @@ def test_stagea_handoff_checkpoint_is_saved_and_resumes_directly_into_stageb(tmp
         K_top=4,
         B_candidates=2,
         seed=7,
-        mcts_strategy="stage_a_only",
+        mcts_strategy="two_stage",
         artifact_dir=source_artifacts,
         esmfold2_stagea_handoff_checkpoint_interval=1,
     )
@@ -2978,62 +2150,6 @@ def test_stagea_handoff_checkpoint_is_saved_and_resumes_directly_into_stageb(tmp
     assert summary["resumed_from_stagea_handoff"] == str(checkpoint_path.resolve())
 
 
-def test_stagea_handoff_checkpoint_can_continue_stagea(tmp_path):
-    source_artifacts = tmp_path / "stagea_source"
-    run_esmfold2_mcts_hallucination(
-        backend=FakeESMFold2Backend(),
-        target_seq="TTTT",
-        L_binder=3,
-        N_steps=2,
-        num_beams=1,
-        init_binder_seq="AAA",
-        K_top=4,
-        B_candidates=2,
-        seed=7,
-        mcts_strategy="stage_a_only",
-        artifact_dir=source_artifacts,
-    )
-    checkpoint_path = (
-        source_artifacts / "handoff_checkpoints" / "stagea_handoff_final.pt"
-    )
-    payload = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
-    handoff = payload["handoff_entries"][0]
-    handoff_sequence = str(handoff["result"]["binder_seq"])
-    saved_logits = handoff["proposal_logits"].clone()
-    wrong_aa = "F" if handoff_sequence[0] != "F" else "Y"
-    saved_logits[0].zero_()
-    saved_logits[0, AA_TO_ESM_IDX[wrong_aa]] = 1.0
-    handoff["proposal_logits"] = saved_logits
-    torch.save(payload, checkpoint_path)
-
-    resumed_backend = FakeESMFold2Backend()
-    _, _, losses = run_esmfold2_mcts_hallucination(
-        backend=resumed_backend,
-        target_seq="TTTT",
-        L_binder=3,
-        N_steps=4,
-        num_beams=1,
-        K_top=4,
-        B_candidates=2,
-        seed=7,
-        mcts_strategy="stage_a_only",
-        artifact_dir=tmp_path / "stagea_resume",
-        esmfold2_resume_handoff_checkpoint=checkpoint_path,
-        esmfold2_resume_reverify_roots=True,
-    )
-
-    assert len(losses) == 4
-    assert resumed_backend.propose_calls
-    assert all(call["action_group"] is None for call in resumed_backend.propose_calls)
-    assert [call["global_step"] for call in resumed_backend.propose_calls] == [2, 3]
-    expected_logits = minimally_align_binder_logits_to_sequence(
-        saved_logits,
-        handoff_sequence,
-    )
-    assert torch.equal(
-        resumed_backend.propose_calls[0]["proposal_logits"],
-        expected_logits,
-    )
 
 
 def test_stagea_handoff_checkpoint_rejects_mismatched_target(tmp_path):
@@ -3047,7 +2163,7 @@ def test_stagea_handoff_checkpoint_rejects_mismatched_target(tmp_path):
         num_beams=1,
         init_binder_seq="AAA",
         B_candidates=1,
-        mcts_strategy="stage_a_only",
+        mcts_strategy="two_stage",
         artifact_dir=artifact_dir,
     )
 
@@ -3065,6 +2181,34 @@ def test_stagea_handoff_checkpoint_rejects_mismatched_target(tmp_path):
                 artifact_dir / "handoff_checkpoints" / "stagea_handoff_final.pt"
             ),
         )
+
+
+def test_handoff_resume_checks_only_fixed_positions_against_starting_binder(tmp_path):
+    shared = dict(
+        target_seq="TTTT", L_binder=3, num_beams=1, B_candidates=2,
+        mutable_mask=[False, True, True],
+    )
+    source = tmp_path / "source"
+    run_esmfold2_mcts_hallucination(
+        backend=FakeESMFold2Backend(), N_steps=1, init_binder_seq="AAA",
+        artifact_dir=source, **shared,
+    )
+    checkpoint = source / "handoff_checkpoints" / "stagea_handoff_final.pt"
+    rejected = FakeESMFold2Backend()
+    with pytest.raises(ValueError, match="fixed binder position 1"):
+        run_esmfold2_mcts_hallucination(
+            backend=rejected, N_steps=2, init_binder_seq="FAA",
+            artifact_dir=tmp_path / "rejected",
+            esmfold2_resume_handoff_checkpoint=checkpoint, **shared,
+        )
+    assert rejected.verify_calls == rejected.propose_calls == []
+
+    best, _, _ = run_esmfold2_mcts_hallucination(
+        backend=FakeESMFold2Backend(), N_steps=2, init_binder_seq="AYY",
+        artifact_dir=tmp_path / "accepted",
+        esmfold2_resume_handoff_checkpoint=checkpoint, **shared,
+    )
+    assert best[0] == "A"
 
 
 def test_stagea_handoff_can_reverify_roots_after_verifier_config_change(tmp_path):
@@ -3090,7 +2234,7 @@ def test_stagea_handoff_can_reverify_roots_after_verifier_config_change(tmp_path
         num_beams=1,
         init_binder_seq="AAA",
         B_candidates=1,
-        mcts_strategy="stage_a_only",
+        mcts_strategy="two_stage",
         hotspot_params=hotspot_params,
         artifact_dir=source_artifacts,
     )

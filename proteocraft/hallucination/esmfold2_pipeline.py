@@ -9,8 +9,6 @@ import logging
 import math
 import os
 import random
-import shutil
-import statistics
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -28,13 +26,12 @@ from proteocraft.hallucination.esmfold2_backend import (
     minimally_align_binder_logits_to_sequence,
     select_esmfold2_action_group,
     sequence_from_logits_argmax,
-    softly_anchor_mutation_logits,
 )
-from proteocraft.hallucination.mcts_legacy import (
+from proteocraft.hallucination.stage_a_tree import (
     LEGACY_SELECTION_MODES,
-    LegacyMCTSTree,
+    StageATree,
 )
-from proteocraft.hallucination.mcts_controller import MCTSTree
+from proteocraft.hallucination.stage_b_tree import StageBTree
 
 
 logger = logging.getLogger(__name__)
@@ -95,8 +92,6 @@ class _NoopArtifactRecorder:
     def write_checkpoint(self, **event: Any) -> None:
         return None
 
-    def write_logits(self, **event: Any) -> None:
-        return None
 
     def write_proposal_trace(self, **event: Any) -> None:
         return None
@@ -104,15 +99,7 @@ class _NoopArtifactRecorder:
     def write_summary(self, **summary: Any) -> None:
         return None
 
-    def reset_best_of_n_trajectory(self, trajectory_index: int) -> None:
-        return None
 
-    def write_best_of_n_trajectory_summary(
-        self,
-        trajectory_index: int,
-        summary: Mapping[str, Any],
-    ) -> None:
-        return None
 
 
 class _ESMArtifactRecorder(_NoopArtifactRecorder):
@@ -267,27 +254,6 @@ class _ESMArtifactRecorder(_NoopArtifactRecorder):
             encoding="utf-8",
         )
 
-    def write_logits(self, **event: Any) -> None:
-        logits = event.get("logits")
-        if logits is None:
-            return
-        trajectory_index = int(event.get("trajectory_index", 0))
-        label = _safe_path_token(str(event.get("label", "logits")))
-        trajectory_dir = (
-            self.artifact_dir
-            / "best_of_n"
-            / f"trajectory_{trajectory_index:03d}"
-        )
-        trajectory_dir.mkdir(parents=True, exist_ok=True)
-        payload = {
-            "trajectory_index": trajectory_index,
-            "label": label,
-            "seed": event.get("seed"),
-            "sequence": event.get("sequence"),
-            "sequence_hash": _sequence_hash(event.get("sequence")),
-            "logits": torch.as_tensor(logits).detach().cpu().clone(),
-        }
-        torch.save(payload, trajectory_dir / f"{label}.pt")
 
     def write_proposal_trace(self, **event: Any) -> None:
         if not self.save_visualization_trace:
@@ -334,61 +300,7 @@ class _ESMArtifactRecorder(_NoopArtifactRecorder):
     def write_summary(self, **summary: Any) -> None:
         self._write_json_atomic(self.summary_path, summary)
 
-    def reset_best_of_n_trajectory(self, trajectory_index: int) -> None:
-        trajectory_index = int(trajectory_index)
-        for path in (
-            self.trajectory_path,
-            self.candidates_path,
-            self.soft_steps_path,
-        ):
-            if not path.exists():
-                continue
-            kept_lines: List[str] = []
-            for raw_line in path.read_text(encoding="utf-8").splitlines():
-                try:
-                    payload = json.loads(raw_line)
-                except json.JSONDecodeError:
-                    continue
-                is_target = (
-                    payload.get("stage") == "best_of_n"
-                    and int(payload.get("step", -1)) == trajectory_index
-                )
-                if not is_target:
-                    kept_lines.append(raw_line)
-            path.write_text(
-                "".join(f"{line}\n" for line in kept_lines),
-                encoding="utf-8",
-            )
 
-        trajectory_dir = (
-            self.artifact_dir
-            / "best_of_n"
-            / f"trajectory_{trajectory_index:03d}"
-        )
-        checkpoint_dir = (
-            self.artifact_dir
-            / "checkpoints"
-            / "best_of_n"
-            / f"step_{trajectory_index:04d}"
-        )
-        shutil.rmtree(trajectory_dir, ignore_errors=True)
-        shutil.rmtree(checkpoint_dir, ignore_errors=True)
-
-    def write_best_of_n_trajectory_summary(
-        self,
-        trajectory_index: int,
-        summary: Mapping[str, Any],
-    ) -> None:
-        trajectory_dir = (
-            self.artifact_dir
-            / "best_of_n"
-            / f"trajectory_{int(trajectory_index):03d}"
-        )
-        trajectory_dir.mkdir(parents=True, exist_ok=True)
-        self._write_json_atomic(
-            trajectory_dir / "trajectory_summary.json",
-            dict(summary),
-        )
 
     @staticmethod
     def _append_jsonl(path: Path, payload: Dict[str, Any]) -> None:
@@ -530,16 +442,7 @@ def _write_soft_step_artifacts(
 ) -> None:
     for metric in list(getattr(batch, "soft_step_metrics", []) or []):
         metric = dict(metric)
-        logits_snapshot = metric.pop("logits_snapshot", None)
-        if stage == "best_of_n" and logits_snapshot is not None:
-            local_step = int(metric.get("local_step", 0))
-            recorder.write_logits(
-                trajectory_index=0 if step is None else int(step),
-                label=f"soft_step_{local_step + 1:04d}",
-                logits=logits_snapshot,
-                sequence=metric.get("argmax_sequence"),
-                seed=None,
-            )
+        metric.pop("logits_snapshot", None)
         recorder.write_soft_step(
             stage=stage,
             step=step,
@@ -739,8 +642,6 @@ def _normalize_target_key(target_seq: Union[str, Sequence[str]]) -> str:
     return "|".join(str(seq) for seq in target_seq)
 
 
-def _placeholder_logits(sequence: str) -> torch.Tensor:
-    return torch.zeros(len(sequence), len(ESM_AA_ORDER), dtype=torch.float32)
 
 
 def _initial_proposal_logits(
@@ -913,30 +814,6 @@ def _proposal_confidence_summary(batch: ESMFold2ProposalBatch) -> Dict[str, Any]
     }
 
 
-def _prepare_backend_verifier_reference_features(
-    backend: Any,
-    *,
-    binder_seq: str,
-    target_seq: Union[str, Sequence[str]],
-    seed: Optional[int],
-) -> Optional[Dict[str, torch.Tensor]]:
-    prepare = getattr(backend, "prepare_verifier_reference_features", None)
-    if not callable(prepare):
-        return None
-    raw = prepare(
-        binder_seq=binder_seq,
-        target_seq=target_seq,
-        seed=seed,
-    )
-    if not isinstance(raw, Mapping):
-        raise TypeError(
-            "prepare_verifier_reference_features must return a mapping"
-        )
-    return {
-        str(key): value.detach().clone()
-        for key, value in raw.items()
-        if isinstance(value, torch.Tensor)
-    }
 
 
 def _call_backend_propose(
@@ -1051,92 +928,6 @@ def _call_backend_propose(
     return _normalize_proposal_batch(raw)
 
 
-def _call_backend_continuous_design(
-    backend: Any,
-    *,
-    proposal_logits: Optional[torch.Tensor],
-    reference_coordinates: Optional[torch.Tensor] = None,
-    reference_features: Optional[Mapping[str, torch.Tensor]] = None,
-    hotspot_params: Optional[Dict[str, Any]] = None,
-    hotspot_weight_override: Optional[float] = None,
-    track_confidence_override: Optional[bool] = None,
-    soft_steps_override: Optional[int] = None,
-    temperature_step_offset: int = 0,
-    temperature_total_steps: Optional[int] = None,
-    preserve_proposal_logits: bool = False,
-    **kwargs: Any,
-) -> ESMFold2ProposalBatch:
-    if not hasattr(backend, "continuous_design"):
-        raise ValueError("ESMFold2 continuous_stage_a requires backend.continuous_design")
-    design_kwargs = dict(kwargs)
-    if _callable_accepts_argument(backend.continuous_design, "proposal_logits"):
-        design_kwargs["proposal_logits"] = (
-            proposal_logits.detach().clone() if proposal_logits is not None else None
-        )
-    one_step_enabled = bool(
-        getattr(
-            getattr(backend, "config", None),
-            "one_step_diffusion_enabled",
-            False,
-        )
-    )
-    if one_step_enabled and _callable_accepts_argument(
-        backend.continuous_design,
-        "reference_coordinates",
-    ):
-        design_kwargs["reference_coordinates"] = (
-            reference_coordinates.detach().clone()
-            if reference_coordinates is not None
-            else None
-        )
-    if (
-        one_step_enabled
-        and reference_features is not None
-        and _callable_accepts_argument(
-            backend.continuous_design,
-            "reference_features",
-        )
-    ):
-        design_kwargs["reference_features"] = {
-            str(key): value.detach().clone()
-            for key, value in reference_features.items()
-        }
-    if _callable_accepts_argument(backend.continuous_design, "track_confidence_override"):
-        design_kwargs["track_confidence_override"] = track_confidence_override
-    if _callable_accepts_argument(backend.continuous_design, "soft_steps_override"):
-        design_kwargs["soft_steps_override"] = soft_steps_override
-    if (
-        (int(temperature_step_offset) != 0 or temperature_total_steps is not None)
-        and _callable_accepts_argument(
-            backend.continuous_design, "temperature_step_offset"
-        )
-    ):
-        design_kwargs["temperature_step_offset"] = int(temperature_step_offset)
-    if (
-        temperature_total_steps is not None
-        and _callable_accepts_argument(
-            backend.continuous_design, "temperature_total_steps"
-        )
-    ):
-        design_kwargs["temperature_total_steps"] = temperature_total_steps
-    if _callable_accepts_argument(
-        backend.continuous_design, "preserve_proposal_logits"
-    ):
-        design_kwargs["preserve_proposal_logits"] = bool(preserve_proposal_logits)
-    if _callable_accepts_argument(backend.continuous_design, "hotspot_params"):
-        design_kwargs["hotspot_params"] = (
-            dict(hotspot_params) if hotspot_params is not None else None
-        )
-    if (
-        hotspot_params is not None
-        and hotspot_weight_override is not None
-        and _callable_accepts_argument(
-            backend.continuous_design, "hotspot_weight_override"
-        )
-    ):
-        design_kwargs["hotspot_weight_override"] = hotspot_weight_override
-    raw = backend.continuous_design(**design_kwargs)
-    return _normalize_proposal_batch(raw)
 
 
 def _callable_accepts_argument(func: Any, name: str) -> bool:
@@ -1196,7 +987,7 @@ def _allocate_group_budgets(group_priors: Dict[str, float], total_budget: int) -
 
 
 def _select_stageb_actions_by_group_quota(
-    tree: MCTSTree,
+    tree: StageBTree,
     node: Any,
     actions: Sequence[Any],
     *,
@@ -1286,7 +1077,7 @@ def _select_stageb_actions_by_group_quota(
     return selected, actual_quotas
 
 
-class _ESMFold2StageBMCTSTree(MCTSTree):
+class _ESMFold2StageBMCTSTree(StageBTree):
     """MCTS tree with a fixed, ESMFold2-native Stage-B reward."""
 
     def __init__(
@@ -2000,1418 +1791,10 @@ def _load_initial_logits_checkpoint_states(
     return states, [str(path) for path in checkpoint_paths]
 
 
-def run_esmfold2_best_of_n(
-    *,
-    backend: Any,
-    target_seq: Union[str, Sequence[str]],
-    L_binder: int = 40,
-    best_of_n: int = 8,
-    init_binder_seq: Optional[str] = None,
-    seed: Optional[int] = 42,
-    mutable_mask: Optional[Sequence[bool]] = None,
-    hotspot_params: Optional[Dict[str, Any]] = None,
-    artifact_dir: Optional[Union[str, os.PathLike[str]]] = None,
-    save_verified_candidate_cif: bool = False,
-    esmfold2_initial_logits_checkpoint: Optional[
-        Union[str, os.PathLike[str]]
-    ] = None,
-    esmfold2_logit_init_mode: str = "official_exact",
-    esmfold2_soft_steps: int = 150,
-    track_confidence: bool = True,
-    pass_loss_threshold: Optional[float] = None,
-    verifier_seed: Optional[int] = None,
-    resume: bool = True,
-) -> Tuple[str, str, List[float]]:
-    """Run independent continuous ESMFold2 trajectories without MCTS.
-
-    Each trajectory starts from independently seeded logits, or from one exact
-    external logits checkpoint, performs one uninterrupted soft-logit
-    optimization, and full-verifies its final and late-confidence candidates.
-    The same full-verifier seed is used for every candidate so Best-of-N
-    comparisons are not confounded by verifier noise.
-    """
-
-    if backend is None:
-        raise ValueError("backend is required for ESMFold2 Best-of-N")
-    L_binder = int(L_binder)
-    best_of_n = int(best_of_n)
-    soft_steps = int(esmfold2_soft_steps)
-    if L_binder <= 0:
-        raise ValueError("L_binder must be positive")
-    if best_of_n <= 0:
-        raise ValueError("best_of_n must be positive")
-    if soft_steps <= 0:
-        raise ValueError("esmfold2_soft_steps must be positive")
-    if pass_loss_threshold is not None and not math.isfinite(
-        float(pass_loss_threshold)
-    ):
-        raise ValueError("pass_loss_threshold must be finite when provided")
-
-    mutable_mask = _normalize_mutable_mask(mutable_mask, L_binder)
-    hotspot_params = dict(hotspot_params) if hotspot_params else None
-    hotspot_indices = [
-        int(index)
-        for index in (hotspot_params or {}).get("target_hotspot_concat_indices", [])
-    ]
-    backend_config = getattr(backend, "config", None)
-    hotspot_weight = float(getattr(backend_config, "hotspot_weight", 0.0))
-    hotspot_verify_weight = float(
-        getattr(backend_config, "hotspot_verify_weight", 0.0)
-    )
-    if hotspot_weight > 0.0 and not hotspot_indices:
-        raise ValueError(
-            "positive ESMFold2 hotspot_weight requires target hotspot indices"
-        )
-    if hotspot_verify_weight > 0.0 and not hotspot_indices:
-        raise ValueError(
-            "positive ESMFold2 hotspot_verify_weight requires target hotspot indices"
-        )
-
-    target_key = _normalize_target_key(target_seq)
-    logit_init_mode = _normalize_logit_init_mode(esmfold2_logit_init_mode)
-    shared_verify_seed = (
-        int(verifier_seed)
-        if verifier_seed is not None
-        else _stable_seed(
-            seed,
-            "esm_best_of_n_full_verify",
-            target_key,
-        )
-    )
-    loaded_initial_states: Optional[List[Tuple[str, torch.Tensor]]] = None
-    initial_logits_checkpoint_paths: List[str] = []
-    initial_logits_checkpoint_source = None
-    if esmfold2_initial_logits_checkpoint is not None:
-        loaded_initial_states, initial_logits_checkpoint_paths = (
-            _load_initial_logits_checkpoint_states(
-                esmfold2_initial_logits_checkpoint,
-                L_binder=L_binder,
-                num_beams=best_of_n,
-                init_binder_seq=init_binder_seq,
-                mutable_mask=mutable_mask,
-            )
-        )
-        initial_logits_checkpoint_source = str(
-            Path(esmfold2_initial_logits_checkpoint).expanduser().resolve()
-        )
-    artifact_path = Path(artifact_dir) if artifact_dir is not None else None
-    contract_path = (
-        artifact_path / "best_of_n_config.json"
-        if artifact_path is not None
-        else None
-    )
-    contract = {
-        "schema_version": 1,
-        "strategy": "best_of_n",
-        "target_key": target_key,
-        "binder_length": L_binder,
-        "best_of_n": best_of_n,
-        "base_seed": seed,
-        "soft_steps_per_trajectory": soft_steps,
-        "logit_init_mode": logit_init_mode,
-        "track_confidence": bool(track_confidence),
-        "shared_verifier_seed": shared_verify_seed,
-        "initial_logits_checkpoint_source": initial_logits_checkpoint_source,
-        "initial_logits_checkpoint_paths": initial_logits_checkpoint_paths,
-        "initial_binder_sequence": init_binder_seq,
-        "mutable_mask": mutable_mask,
-        "hotspot_indices_0based": hotspot_indices,
-        "pass_loss_threshold": pass_loss_threshold,
-    }
-    contract_exists = bool(contract_path is not None and contract_path.exists())
-    if contract_exists:
-        existing_contract = json.loads(contract_path.read_text(encoding="utf-8"))
-        if existing_contract != _json_ready(contract):
-            raise ValueError(
-                "Best-of-N resume configuration does not match the existing "
-                f"artifact contract at {contract_path}"
-            )
-    elif artifact_path is not None:
-        artifact_path.mkdir(parents=True, exist_ok=True)
-        _ESMArtifactRecorder._write_json_atomic(contract_path, contract)
-
-    artifact_recorder = _make_artifact_recorder(
-        artifact_dir,
-        append=bool(resume and contract_exists),
-        save_verified_candidate_cif=save_verified_candidate_cif,
-    )
-    verifier_cache: Dict[str, Any] = {}
-    trajectory_summaries: List[Dict[str, Any]] = []
-    trajectory_best_losses: List[float] = []
-    global_best_result: Optional[Any] = None
-
-    logger.info("=" * 70)
-    logger.info("ESMFold2 Best-of-N continuous design")
-    logger.info(
-        "target=%s binder_length=%d trajectories=%d soft_steps=%d "
-        "logit_init=%s verifier_seed=%d",
-        target_key,
-        L_binder,
-        best_of_n,
-        soft_steps,
-        logit_init_mode,
-        shared_verify_seed,
-    )
-    logger.info("=" * 70)
-
-    for trajectory_index in range(best_of_n):
-        trajectory_summary_path = (
-            artifact_path
-            / "best_of_n"
-            / f"trajectory_{trajectory_index:03d}"
-            / "trajectory_summary.json"
-            if artifact_path is not None
-            else None
-        )
-        if resume and trajectory_summary_path is not None and trajectory_summary_path.exists():
-            trajectory_summary = json.loads(
-                trajectory_summary_path.read_text(encoding="utf-8")
-            )
-            if int(trajectory_summary.get("trajectory_index", -1)) != trajectory_index:
-                raise ValueError(
-                    f"Invalid trajectory summary at {trajectory_summary_path}"
-                )
-            resumed_sequence = str(trajectory_summary["best_sequence"])
-            trajectory_best = _verify_with_cache(
-                backend,
-                verifier_cache,
-                binder_seq=resumed_sequence,
-                target_seq=target_seq,
-                seed=shared_verify_seed,
-                hotspot_params=hotspot_params,
-            )
-            trajectory_best_loss = float(trajectory_best.total_loss)
-            recorded_loss = float(trajectory_summary["best_loss"])
-            loss_delta = trajectory_best_loss - recorded_loss
-            if abs(loss_delta) > 0.05:
-                raise ValueError(
-                    "Resumed Best-of-N trajectory verifier result changed: "
-                    f"trajectory={trajectory_index} recorded={recorded_loss:.6f} "
-                    f"current={trajectory_best_loss:.6f}"
-                )
-            trajectory_summary.setdefault("original_best_loss", recorded_loss)
-            trajectory_summary["best_loss"] = trajectory_best_loss
-            trajectory_summary["resume_reverified_loss"] = trajectory_best_loss
-            trajectory_summary["resume_reverify_loss_delta"] = loss_delta
-            trajectory_summary["best_loss_dict"] = _loss_dict_for_artifact(
-                trajectory_best
-            )
-            trajectory_summary["best_summary_confidence"] = _json_ready(
-                _summary_without_structure(
-                    dict(
-                        getattr(
-                            trajectory_best,
-                            "summary_confidence",
-                            {},
-                        )
-                        or {}
-                    )
-                )
-            )
-            artifact_recorder.write_best_of_n_trajectory_summary(
-                trajectory_index,
-                trajectory_summary,
-            )
-            trajectory_summaries.append(trajectory_summary)
-            trajectory_best_losses.append(trajectory_best_loss)
-            if (
-                global_best_result is None
-                or trajectory_best_loss < float(global_best_result.total_loss)
-            ):
-                global_best_result = trajectory_best
-            logger.info(
-                "Best-of-N trajectory %d/%d resumed | best_loss=%.4f",
-                trajectory_index + 1,
-                best_of_n,
-                trajectory_best_loss,
-            )
-            continue
-
-        artifact_recorder.reset_best_of_n_trajectory(trajectory_index)
-        trajectory_seed = _stable_seed(
-            seed,
-            "esm_best_of_n_trajectory",
-            target_key,
-            trajectory_index,
-        )
-        if loaded_initial_states is not None:
-            initial_sequence, initial_logits = loaded_initial_states[
-                trajectory_index
-            ]
-        else:
-            initial_states = _make_phase0_seed_states(
-                init_binder_seq,
-                num_beams=1,
-                L_binder=L_binder,
-                seed=trajectory_seed,
-                mutable_mask=mutable_mask,
-                logit_init_mode=logit_init_mode,
-                device=(
-                    getattr(backend, "device", None)
-                    if logit_init_mode == "official_exact"
-                    else None
-                ),
-            )
-            initial_sequence, initial_logits = initial_states[0]
-        one_step_enabled = bool(
-            getattr(
-                getattr(backend, "config", None),
-                "one_step_diffusion_enabled",
-                False,
-            )
-        )
-        initial_reference_result = None
-        initial_reference_features = None
-        if one_step_enabled:
-            initial_reference_result = _verify_with_cache(
-                backend,
-                verifier_cache,
-                binder_seq=initial_sequence,
-                target_seq=target_seq,
-                seed=shared_verify_seed,
-                hotspot_params=hotspot_params,
-            )
-            if initial_reference_result.coordinate is None:
-                raise ValueError(
-                    "Best-of-N One-step diffusion requires verifier "
-                    "coordinates for every initial trajectory"
-                )
-            initial_reference_features = (
-                _prepare_backend_verifier_reference_features(
-                    backend,
-                    binder_seq=initial_sequence,
-                    target_seq=target_seq,
-                    seed=shared_verify_seed,
-                )
-            )
-        proposal_batch = _call_backend_continuous_design(
-            backend,
-            current_seq=initial_sequence,
-            target_seq=target_seq,
-            global_step=0,
-            seed=trajectory_seed,
-            mutable_mask=mutable_mask,
-            proposal_logits=initial_logits,
-            reference_coordinates=(
-                initial_reference_result.coordinate
-                if initial_reference_result is not None
-                else None
-            ),
-            reference_features=initial_reference_features,
-            hotspot_params=hotspot_params,
-            track_confidence_override=bool(track_confidence),
-            soft_steps_override=soft_steps,
-        )
-        _write_soft_step_artifacts(
-            artifact_recorder,
-            stage="best_of_n",
-            step=trajectory_index,
-            selected_sequence=initial_sequence,
-            batch=proposal_batch,
-        )
-        artifact_recorder.write_logits(
-            trajectory_index=trajectory_index,
-            label="initial_logits",
-            logits=(
-                proposal_batch.logits_before
-                if proposal_batch.logits_before is not None
-                else initial_logits
-            ),
-            sequence=initial_sequence,
-            seed=trajectory_seed,
-        )
-
-        candidates = [
-            _clip_sequence_by_mutable_mask(
-                str(candidate),
-                mutable_mask,
-                initial_sequence,
-            )
-            for candidate in _proposal_sequences_from_batch(proposal_batch)
-        ]
-        candidates = list(
-            dict.fromkeys(candidate for candidate in candidates if candidate)
-        )
-        if not candidates:
-            candidates = [initial_sequence]
-
-        candidate_results = []
-        for candidate in candidates:
-            result = _verify_with_cache(
-                backend,
-                verifier_cache,
-                binder_seq=candidate,
-                target_seq=target_seq,
-                seed=shared_verify_seed,
-                hotspot_params=hotspot_params,
-            )
-            candidate_results.append(result)
-            _write_candidate_artifact(
-                artifact_recorder,
-                stage="best_of_n",
-                step=trajectory_index,
-                parent_sequence=initial_sequence,
-                result=result,
-                action_group=f"trajectory_{trajectory_index:03d}",
-            )
-
-        trajectory_best = min(
-            candidate_results,
-            key=lambda result: float(result.total_loss),
-        )
-        trajectory_best_loss = float(trajectory_best.total_loss)
-        trajectory_best_losses.append(trajectory_best_loss)
-        if (
-            global_best_result is None
-            or trajectory_best_loss < float(global_best_result.total_loss)
-        ):
-            global_best_result = trajectory_best
-
-        final_sequence = (
-            sequence_from_logits_argmax(
-                proposal_batch.logits_after,
-                current_seq=initial_sequence,
-                mutable_mask=mutable_mask,
-            )
-            if proposal_batch.logits_after is not None
-            else str(trajectory_best.binder_seq)
-        )
-        artifact_recorder.write_logits(
-            trajectory_index=trajectory_index,
-            label="final_logits",
-            logits=proposal_batch.logits_after,
-            sequence=final_sequence,
-            seed=trajectory_seed,
-        )
-        trajectory_summary = {
-            "trajectory_index": trajectory_index,
-            "trajectory_seed": trajectory_seed,
-            "verifier_seed": shared_verify_seed,
-            "initial_logits_checkpoint": (
-                initial_logits_checkpoint_paths[trajectory_index]
-                if initial_logits_checkpoint_paths
-                else None
-            ),
-            "initial_sequence": initial_sequence,
-            "initial_sequence_hash": _sequence_hash(initial_sequence),
-            "initial_reference_loss": (
-                float(initial_reference_result.total_loss)
-                if initial_reference_result is not None
-                else None
-            ),
-            "final_argmax_sequence": final_sequence,
-            "final_argmax_sequence_hash": _sequence_hash(final_sequence),
-            "verified_candidate_count": len(candidate_results),
-            "best_sequence": str(trajectory_best.binder_seq),
-            "best_sequence_hash": _sequence_hash(str(trajectory_best.binder_seq)),
-            "best_loss": trajectory_best_loss,
-            "best_loss_dict": _loss_dict_for_artifact(trajectory_best),
-            "best_summary_confidence": _json_ready(
-                _summary_without_structure(
-                    dict(getattr(trajectory_best, "summary_confidence", {}) or {})
-                )
-            ),
-            "passed": (
-                trajectory_best_loss <= float(pass_loss_threshold)
-                if pass_loss_threshold is not None
-                else None
-            ),
-        }
-        trajectory_summaries.append(trajectory_summary)
-        artifact_recorder.write_step(
-            stage="best_of_n",
-            step=trajectory_index,
-            **trajectory_summary,
-        )
-        artifact_recorder.write_checkpoint(
-            stage="best_of_n",
-            step=trajectory_index,
-            label="trajectory_best",
-            result=trajectory_best,
-            selected_sequence=str(trajectory_best.binder_seq),
-            parent_sequence=initial_sequence,
-            is_global_best=False,
-        )
-        artifact_recorder.write_best_of_n_trajectory_summary(
-            trajectory_index,
-            trajectory_summary,
-        )
-        logger.info(
-            "Best-of-N trajectory %d/%d | seed=%d candidates=%d best_loss=%.4f",
-            trajectory_index + 1,
-            best_of_n,
-            trajectory_seed,
-            len(candidate_results),
-            trajectory_best_loss,
-        )
-
-    if global_best_result is None:
-        raise RuntimeError("ESMFold2 Best-of-N produced no verified candidates")
-
-    global_best_sequence = str(global_best_result.binder_seq)
-    pass_count = (
-        sum(bool(item["passed"]) for item in trajectory_summaries)
-        if pass_loss_threshold is not None
-        else None
-    )
-    summary = {
-        "strategy": "best_of_n",
-        "best_of_n": best_of_n,
-        "soft_steps_per_trajectory": soft_steps,
-        "track_confidence": bool(track_confidence),
-        "resume_enabled": bool(resume),
-        "logit_init_mode": logit_init_mode,
-        "shared_verifier_seed": shared_verify_seed,
-        "best_sequence": global_best_sequence,
-        "best_sequence_hash": _sequence_hash(global_best_sequence),
-        "best_loss": float(global_best_result.total_loss),
-        "mean_trajectory_best_loss": statistics.fmean(trajectory_best_losses),
-        "std_trajectory_best_loss": (
-            statistics.pstdev(trajectory_best_losses)
-            if len(trajectory_best_losses) > 1
-            else 0.0
-        ),
-        "min_trajectory_best_loss": min(trajectory_best_losses),
-        "max_trajectory_best_loss": max(trajectory_best_losses),
-        "pass_loss_threshold": pass_loss_threshold,
-        "passing_trajectory_count": pass_count,
-        "pass_at_n": (
-            bool(pass_count and pass_count > 0)
-            if pass_loss_threshold is not None
-            else None
-        ),
-        "hotspot_indices_0based": hotspot_indices,
-        "trajectory_summaries": trajectory_summaries,
-        "artifact_dir": str(artifact_dir) if artifact_dir is not None else None,
-    }
-    artifact_recorder.write_checkpoint(
-        stage="best_of_n",
-        step=best_of_n,
-        label="overall_best",
-        result=global_best_result,
-        selected_sequence=global_best_sequence,
-        parent_sequence=None,
-        is_global_best=True,
-    )
-    artifact_recorder.write_summary(**summary)
-    logger.info(
-        "ESMFold2 Best-of-N complete | N=%d best=%.4f mean=%.4f std=%.4f",
-        best_of_n,
-        float(global_best_result.total_loss),
-        float(summary["mean_trajectory_best_loss"]),
-        float(summary["std_trajectory_best_loss"]),
-    )
-    return global_best_sequence, global_best_sequence, trajectory_best_losses
 
 
-def _allocate_chunked_best_of_n_steps(
-    total_outer_steps: int,
-    best_of_n: int,
-) -> List[int]:
-    """Split a fixed outer-step budget as evenly as possible across trajectories."""
-
-    total_outer_steps = int(total_outer_steps)
-    best_of_n = int(best_of_n)
-    if best_of_n <= 0:
-        raise ValueError("best_of_n must be positive")
-    if total_outer_steps < best_of_n:
-        raise ValueError(
-            "total_outer_steps must be at least best_of_n so every trajectory "
-            "receives one outer step"
-        )
-    base_steps, remainder = divmod(total_outer_steps, best_of_n)
-    return [
-        base_steps + (1 if trajectory_index < remainder else 0)
-        for trajectory_index in range(best_of_n)
-    ]
 
 
-def run_esmfold2_chunked_best_of_n(
-    *,
-    backend: Any,
-    target_seq: Union[str, Sequence[str]],
-    L_binder: int = 40,
-    best_of_n: int = 4,
-    total_outer_steps: int = 70,
-    init_binder_seq: Optional[str] = None,
-    seed: Optional[int] = 42,
-    mutable_mask: Optional[Sequence[bool]] = None,
-    hotspot_params: Optional[Dict[str, Any]] = None,
-    artifact_dir: Optional[Union[str, os.PathLike[str]]] = None,
-    save_verified_candidate_cif: bool = False,
-    esmfold2_initial_logits_checkpoint: Optional[
-        Union[str, os.PathLike[str]]
-    ] = None,
-    esmfold2_logit_init_mode: str = "official_exact",
-    esmfold2_soft_steps: int = 30,
-    verifier_candidates_per_outer_step: int = 0,
-    continuation_policy: str = "raw_argmax",
-    continuation_soft_anchor_margin: float = 0.1,
-    candidate_k_top: int = 10,
-    candidate_temperature: float = 1.0,
-    candidate_max_mutations_per_seq: int = 8,
-    pass_loss_threshold: Optional[float] = None,
-    verifier_seed: Optional[int] = None,
-    resume: bool = True,
-) -> Tuple[str, str, List[float]]:
-    """Run proposal-budget-matched chunked trajectories without MCTS.
-
-    The fixed outer-step budget is split across independent trajectories. Each
-    outer step runs the same soft-logit proposal chunk used by Stage A. With
-    ``continuation_policy="raw_argmax"``, each trajectory carries the
-    unanchored argmax logits into the next chunk. With
-    ``continuation_policy="verifier_best"``, the lowest-loss verified
-    candidate continues after a minimal soft anchor when it differs from the
-    raw argmax sequence. When
-    ``verifier_candidates_per_outer_step`` is positive, the proposal also emits
-    and full-verifies the same bounded candidate pool used by Stage A.
-    """
-
-    if backend is None:
-        raise ValueError("backend is required for chunked ESMFold2 Best-of-N")
-    L_binder = int(L_binder)
-    best_of_n = int(best_of_n)
-    total_outer_steps = int(total_outer_steps)
-    soft_steps = int(esmfold2_soft_steps)
-    verifier_candidates_per_outer_step = int(
-        verifier_candidates_per_outer_step
-    )
-    continuation_policy = str(continuation_policy).strip().lower()
-    continuation_soft_anchor_margin = float(
-        continuation_soft_anchor_margin
-    )
-    candidate_k_top = int(candidate_k_top)
-    candidate_temperature = float(candidate_temperature)
-    candidate_max_mutations_per_seq = int(
-        candidate_max_mutations_per_seq
-    )
-    if L_binder <= 0:
-        raise ValueError("L_binder must be positive")
-    if soft_steps <= 0:
-        raise ValueError("esmfold2_soft_steps must be positive")
-    if verifier_candidates_per_outer_step < 0:
-        raise ValueError(
-            "verifier_candidates_per_outer_step must be non-negative"
-        )
-    if continuation_policy not in {"raw_argmax", "verifier_best"}:
-        raise ValueError(
-            "continuation_policy must be one of: raw_argmax, verifier_best"
-        )
-    if (
-        continuation_policy == "verifier_best"
-        and verifier_candidates_per_outer_step <= 0
-    ):
-        raise ValueError(
-            "verifier_best continuation requires at least one verified "
-            "candidate per outer step"
-        )
-    if continuation_soft_anchor_margin <= 0.0:
-        raise ValueError(
-            "continuation_soft_anchor_margin must be positive"
-        )
-    if candidate_k_top <= 0:
-        raise ValueError("candidate_k_top must be positive")
-    if candidate_temperature <= 0.0:
-        raise ValueError("candidate_temperature must be positive")
-    if candidate_max_mutations_per_seq <= 0:
-        raise ValueError(
-            "candidate_max_mutations_per_seq must be positive"
-        )
-    if pass_loss_threshold is not None and not math.isfinite(
-        float(pass_loss_threshold)
-    ):
-        raise ValueError("pass_loss_threshold must be finite when provided")
-
-    outer_step_allocation = _allocate_chunked_best_of_n_steps(
-        total_outer_steps,
-        best_of_n,
-    )
-    mutable_mask = _normalize_mutable_mask(mutable_mask, L_binder)
-    hotspot_params = dict(hotspot_params) if hotspot_params else None
-    hotspot_indices = [
-        int(index)
-        for index in (hotspot_params or {}).get(
-            "target_hotspot_concat_indices",
-            [],
-        )
-    ]
-    backend_config = getattr(backend, "config", None)
-    hotspot_weight = float(getattr(backend_config, "hotspot_weight", 0.0))
-    hotspot_verify_weight = float(
-        getattr(backend_config, "hotspot_verify_weight", 0.0)
-    )
-    if hotspot_weight > 0.0 and not hotspot_indices:
-        raise ValueError(
-            "positive ESMFold2 hotspot_weight requires target hotspot indices"
-        )
-    if hotspot_verify_weight > 0.0 and not hotspot_indices:
-        raise ValueError(
-            "positive ESMFold2 hotspot_verify_weight requires target hotspot indices"
-        )
-
-    one_step_enabled = bool(
-        getattr(backend_config, "one_step_diffusion_enabled", False)
-    )
-    uses_verifier_feedback = continuation_policy == "verifier_best"
-    one_step_config = {
-        "enabled": one_step_enabled,
-        "mode": str(
-            getattr(
-                backend_config,
-                "one_step_diffusion_mode",
-                "reference_noising",
-            )
-        ),
-        "interval": int(
-            getattr(backend_config, "one_step_diffusion_interval", 0)
-        ),
-        "tau": float(
-            getattr(backend_config, "one_step_diffusion_tau", 0.0)
-        ),
-        "weight": float(
-            getattr(backend_config, "one_step_diffusion_weight", 0.0)
-        ),
-        "rg_weight": float(
-            getattr(backend_config, "one_step_diffusion_rg_weight", 0.0)
-        ),
-        "truncated_num_sampling_steps": int(
-            getattr(
-                backend_config,
-                "one_step_diffusion_truncated_num_sampling_steps",
-                50,
-            )
-        ),
-        "truncated_schedule_mode": str(
-            getattr(
-                backend_config,
-                "one_step_diffusion_truncated_schedule_mode",
-                "official_clipped",
-            )
-        ),
-        "truncated_dense_num_sampling_steps": int(
-            getattr(
-                backend_config,
-                "one_step_diffusion_truncated_dense_num_sampling_steps",
-                41,
-            )
-        ),
-        "recycle_coordinates": bool(
-            getattr(
-                backend_config,
-                "one_step_diffusion_recycle_coordinates",
-                False,
-            )
-        ),
-        "hotspot_enabled": bool(
-            getattr(
-                backend_config,
-                "one_step_diffusion_hotspot_enabled",
-                False,
-            )
-        ),
-    }
-    target_key = _normalize_target_key(target_seq)
-    logit_init_mode = _normalize_logit_init_mode(esmfold2_logit_init_mode)
-    shared_verify_seed = (
-        int(verifier_seed)
-        if verifier_seed is not None
-        else _stable_seed(
-            seed,
-            "esm_chunked_best_of_n_full_verify",
-            target_key,
-        )
-    )
-
-    initial_logits_checkpoint_paths: List[str] = []
-    initial_logits_checkpoint_source = None
-    if esmfold2_initial_logits_checkpoint is not None:
-        initial_states, initial_logits_checkpoint_paths = (
-            _load_initial_logits_checkpoint_states(
-                esmfold2_initial_logits_checkpoint,
-                L_binder=L_binder,
-                num_beams=best_of_n,
-                init_binder_seq=init_binder_seq,
-                mutable_mask=mutable_mask,
-                allow_extra_checkpoints=True,
-            )
-        )
-        initial_logits_checkpoint_source = str(
-            Path(esmfold2_initial_logits_checkpoint).expanduser().resolve()
-        )
-    else:
-        initial_states = _make_phase0_seed_states(
-            init_binder_seq,
-            num_beams=best_of_n,
-            L_binder=L_binder,
-            seed=seed,
-            mutable_mask=mutable_mask,
-            logit_init_mode=logit_init_mode,
-            device=(
-                getattr(backend, "device", None)
-                if logit_init_mode == "official_exact"
-                else None
-            ),
-        )
-
-    artifact_path = Path(artifact_dir) if artifact_dir is not None else None
-    contract_path = (
-        artifact_path / "chunked_best_of_n_config.json"
-        if artifact_path is not None
-        else None
-    )
-    contract = {
-        "schema_version": 2,
-        "strategy": "best_of_n_chunked",
-        "target_key": target_key,
-        "binder_length": L_binder,
-        "best_of_n": best_of_n,
-        "base_seed": seed,
-        "total_outer_steps": total_outer_steps,
-        "outer_step_allocation": outer_step_allocation,
-        "soft_steps_per_outer_step": soft_steps,
-        "total_soft_steps": total_outer_steps * soft_steps,
-        "logit_init_mode": logit_init_mode,
-        "shared_verifier_seed": shared_verify_seed,
-        "initial_logits_checkpoint_source": initial_logits_checkpoint_source,
-        "initial_logits_checkpoint_paths": initial_logits_checkpoint_paths,
-        "initial_binder_sequence": init_binder_seq,
-        "mutable_mask": mutable_mask,
-        "hotspot_indices_0based": hotspot_indices,
-        "pass_loss_threshold": pass_loss_threshold,
-        "one_step_diffusion": one_step_config,
-        "intermediate_verifier_selection": False,
-        "mutation_candidate_branching": False,
-        "verifier_feedback_to_trajectory": False,
-        "verifier_candidates_per_outer_step": (
-            verifier_candidates_per_outer_step
-        ),
-        "candidate_k_top": candidate_k_top,
-        "candidate_temperature": candidate_temperature,
-        "candidate_max_mutations_per_seq": (
-            candidate_max_mutations_per_seq
-        ),
-        "configured_full_verifier_budget": (
-            best_of_n
-            + total_outer_steps * verifier_candidates_per_outer_step
-        ),
-        "logits_carry_policy": "raw_argmax_unanchored",
-        "reference_coordinate_policy": (
-            "unused_truncated_trajectory"
-            if one_step_enabled
-            and one_step_config["mode"] == "truncated_trajectory"
-            else (
-                "external_template_noise_consistent_clamp"
-                if one_step_enabled
-                and one_step_config["mode"]
-                == "template_anchored_truncated_trajectory"
-                else (
-                    "initial_full_verifier_coordinates_and_features_fixed"
-                    if one_step_enabled
-                    else "unused"
-                )
-            )
-        ),
-        "verifier_loss_mode": str(
-            getattr(backend_config, "verifier_loss_mode", "pair_chain_iptm")
-        ),
-    }
-    if uses_verifier_feedback:
-        contract.update(
-            {
-                "schema_version": 3,
-                "continuation_policy": continuation_policy,
-                "continuation_soft_anchor_margin": (
-                    continuation_soft_anchor_margin
-                ),
-                "intermediate_verifier_selection": True,
-                "verifier_feedback_to_trajectory": True,
-                "logits_carry_policy": "verifier_best_soft_anchor",
-            }
-        )
-    contract_exists = bool(contract_path is not None and contract_path.exists())
-    if contract_exists:
-        existing_contract = json.loads(contract_path.read_text(encoding="utf-8"))
-        if existing_contract != _json_ready(contract):
-            raise ValueError(
-                "Chunked Best-of-N resume configuration does not match the "
-                f"existing artifact contract at {contract_path}"
-            )
-    elif artifact_path is not None:
-        artifact_path.mkdir(parents=True, exist_ok=True)
-        _ESMArtifactRecorder._write_json_atomic(contract_path, contract)
-
-    artifact_recorder = _make_artifact_recorder(
-        artifact_dir,
-        append=bool(resume and contract_exists),
-        save_verified_candidate_cif=save_verified_candidate_cif,
-    )
-    verifier_cache: Dict[str, Any] = {}
-    trajectory_summaries: List[Dict[str, Any]] = []
-    trajectory_best_losses: List[float] = []
-    global_best_result: Optional[Any] = None
-    candidate_verification_attempts = 0
-    resumed_trajectory_count = 0
-
-    logger.info("=" * 70)
-    logger.info("ESMFold2 chunked Best-of-N design")
-    logger.info(
-        "target=%s binder_length=%d trajectories=%d total_outer_steps=%d "
-        "allocation=%s soft_steps=%d verifier_seed=%d",
-        target_key,
-        L_binder,
-        best_of_n,
-        total_outer_steps,
-        outer_step_allocation,
-        soft_steps,
-        shared_verify_seed,
-    )
-    logger.info(
-        "No tree branching; continuation_policy=%s "
-        "soft_anchor_margin=%.3f verifier_candidates_per_step=%d",
-        continuation_policy,
-        continuation_soft_anchor_margin,
-        verifier_candidates_per_outer_step,
-    )
-    logger.info("=" * 70)
-
-    for trajectory_index, allocated_outer_steps in enumerate(
-        outer_step_allocation
-    ):
-        trajectory_dir = (
-            artifact_path
-            / "chunked_best_of_n"
-            / f"trajectory_{trajectory_index:03d}"
-            if artifact_path is not None
-            else None
-        )
-        trajectory_summary_path = (
-            trajectory_dir / "trajectory_summary.json"
-            if trajectory_dir is not None
-            else None
-        )
-        if (
-            resume
-            and trajectory_summary_path is not None
-            and trajectory_summary_path.exists()
-        ):
-            trajectory_summary = json.loads(
-                trajectory_summary_path.read_text(encoding="utf-8")
-            )
-            final_sequence = str(trajectory_summary["final_sequence"])
-            selection_sequence = str(
-                trajectory_summary.get("best_sequence", final_sequence)
-            )
-            selection_result = _verify_with_cache(
-                backend,
-                verifier_cache,
-                binder_seq=selection_sequence,
-                target_seq=target_seq,
-                seed=shared_verify_seed,
-                hotspot_params=hotspot_params,
-            )
-            selection_loss = float(selection_result.total_loss)
-            recorded_loss = float(
-                trajectory_summary.get(
-                    "best_loss",
-                    trajectory_summary["final_loss"],
-                )
-            )
-            if abs(selection_loss - recorded_loss) > 0.05:
-                raise ValueError(
-                    "Resumed chunked Best-of-N verifier result changed: "
-                    f"trajectory={trajectory_index} "
-                    f"recorded={recorded_loss:.6f} "
-                    f"current={selection_loss:.6f}"
-                )
-            trajectory_summary["resume_reverified_loss"] = selection_loss
-            trajectory_summaries.append(trajectory_summary)
-            trajectory_best_losses.append(selection_loss)
-            candidate_verification_attempts += int(
-                trajectory_summary.get("verified_candidate_count", 0)
-            )
-            resumed_trajectory_count += 1
-            if (
-                global_best_result is None
-                or selection_loss < float(global_best_result.total_loss)
-            ):
-                global_best_result = selection_result
-            continue
-
-        initial_sequence, initial_logits = initial_states[trajectory_index]
-        if initial_logits is None:
-            raise ValueError(
-                "chunked Best-of-N requires persistent proposal logits; "
-                "use official_exact or provide an initial logits checkpoint"
-            )
-        trajectory_seed = _stable_seed(
-            seed,
-            "esm_chunked_best_of_n_trajectory",
-            target_key,
-            trajectory_index,
-        )
-        initial_reference_result = None
-        initial_reference_features = None
-        if one_step_enabled or verifier_candidates_per_outer_step > 0:
-            initial_reference_result = _verify_with_cache(
-                backend,
-                verifier_cache,
-                binder_seq=initial_sequence,
-                target_seq=target_seq,
-                seed=shared_verify_seed,
-                hotspot_params=hotspot_params,
-            )
-            if one_step_enabled and initial_reference_result.coordinate is None:
-                raise ValueError(
-                    "Chunked Best-of-N One-step diffusion requires initial "
-                    "verifier coordinates for every trajectory"
-                )
-            if one_step_enabled:
-                initial_reference_features = (
-                    _prepare_backend_verifier_reference_features(
-                        backend,
-                        binder_seq=initial_sequence,
-                        target_seq=target_seq,
-                        seed=shared_verify_seed,
-                    )
-                )
-        trajectory_best_result = initial_reference_result
-        trajectory_verified_candidate_count = 0
-
-        current_sequence = str(initial_sequence)
-        current_logits = initial_logits.detach().clone()
-        if trajectory_dir is not None:
-            trajectory_dir.mkdir(parents=True, exist_ok=True)
-            torch.save(
-                {
-                    "sequence": current_sequence,
-                    "sequence_hash": _sequence_hash(current_sequence),
-                    "logits": current_logits.detach().cpu(),
-                    "trajectory_seed": trajectory_seed,
-                },
-                trajectory_dir / "initial_logits.pt",
-            )
-
-        trajectory_step_offset = sum(
-            outer_step_allocation[:trajectory_index]
-        )
-        for outer_step in range(allocated_outer_steps):
-            budget_step = trajectory_step_offset + outer_step
-            if verifier_candidates_per_outer_step > 0:
-                chunk_seed = _stable_seed(
-                    seed,
-                    "esm_propose",
-                    target_key,
-                    current_sequence,
-                    budget_step,
-                )
-                proposal_batch = _call_backend_propose(
-                    backend,
-                    current_seq=current_sequence,
-                    target_seq=target_seq,
-                    global_step=budget_step,
-                    K_top=candidate_k_top,
-                    B_candidates=verifier_candidates_per_outer_step,
-                    T_sample=candidate_temperature,
-                    max_mutations_per_seq=candidate_max_mutations_per_seq,
-                    seed=chunk_seed,
-                    action_group=None,
-                    mutable_mask=mutable_mask,
-                    proposal_logits=current_logits,
-                    reference_coordinates=(
-                        initial_reference_result.coordinate
-                        if initial_reference_result is not None
-                        else None
-                    ),
-                    reference_features=initial_reference_features,
-                    hotspot_params=hotspot_params,
-                    track_confidence_override=False,
-                    soft_steps_override=soft_steps,
-                    preserve_proposal_logits=True,
-                )
-            else:
-                chunk_seed = _stable_seed(
-                    trajectory_seed,
-                    "outer_step",
-                    outer_step,
-                )
-                proposal_batch = _call_backend_continuous_design(
-                    backend,
-                    current_seq=current_sequence,
-                    target_seq=target_seq,
-                    global_step=outer_step,
-                    seed=chunk_seed,
-                    mutable_mask=mutable_mask,
-                    proposal_logits=current_logits,
-                    reference_coordinates=(
-                        initial_reference_result.coordinate
-                        if initial_reference_result is not None
-                        else None
-                    ),
-                    reference_features=initial_reference_features,
-                    hotspot_params=hotspot_params,
-                    track_confidence_override=False,
-                    soft_steps_override=soft_steps,
-                    preserve_proposal_logits=True,
-                )
-            if proposal_batch.logits_after is None:
-                raise RuntimeError(
-                    "chunked Best-of-N requires logits_after from every "
-                    "continuous proposal chunk"
-                )
-            _write_soft_step_artifacts(
-                artifact_recorder,
-                stage="best_of_n_chunked",
-                step=outer_step,
-                selected_sequence=current_sequence,
-                batch=proposal_batch,
-                action_group=f"trajectory_{trajectory_index:03d}",
-            )
-            next_logits = proposal_batch.logits_after.detach().clone()
-            next_sequence = sequence_from_logits_argmax(
-                next_logits,
-                current_seq=current_sequence,
-                mutable_mask=mutable_mask,
-            )
-            next_sequence = _clip_sequence_by_mutable_mask(
-                next_sequence,
-                mutable_mask,
-                current_sequence,
-            )
-            verified_results = []
-            round_best = None
-            if verifier_candidates_per_outer_step > 0:
-                # The raw argmax sequence is the only state allowed to continue
-                # an unanchored trajectory. Verify it in the same fixed-size
-                # candidate batch so final selection adds no unbudgeted call.
-                candidates = [
-                    next_sequence,
-                    *_proposal_sequences_from_batch(
-                        proposal_batch,
-                        include_confidence=False,
-                    ),
-                ]
-                candidates = [
-                    _clip_sequence_by_mutable_mask(
-                        str(candidate),
-                        mutable_mask,
-                        current_sequence,
-                    )
-                    for candidate in candidates
-                ]
-                candidates = [
-                    candidate
-                    for candidate in candidates
-                    if candidate and candidate != current_sequence
-                ]
-                candidates = list(dict.fromkeys(candidates))[
-                    :verifier_candidates_per_outer_step
-                ]
-                for candidate in candidates:
-                    result = _verify_with_cache(
-                        backend,
-                        verifier_cache,
-                        binder_seq=candidate,
-                        target_seq=target_seq,
-                        seed=shared_verify_seed,
-                        hotspot_params=hotspot_params,
-                    )
-                    verified_results.append(result)
-                    _write_candidate_artifact(
-                        artifact_recorder,
-                        stage="best_of_n_chunked",
-                        step=budget_step,
-                        parent_sequence=current_sequence,
-                        result=result,
-                        action_group=(
-                            f"trajectory_{trajectory_index:03d}"
-                        ),
-                    )
-                trajectory_verified_candidate_count += len(verified_results)
-                candidate_verification_attempts += len(verified_results)
-                if verified_results:
-                    round_best = min(
-                        verified_results,
-                        key=lambda result: float(result.total_loss),
-                    )
-                    if (
-                        trajectory_best_result is None
-                        or float(round_best.total_loss)
-                        < float(trajectory_best_result.total_loss)
-                    ):
-                        trajectory_best_result = round_best
-                    if (
-                        global_best_result is None
-                        or float(round_best.total_loss)
-                        < float(global_best_result.total_loss)
-                    ):
-                        global_best_result = round_best
-            raw_argmax_sequence = next_sequence
-            continuation_sequence = raw_argmax_sequence
-            continuation_logits = next_logits
-            verifier_feedback_applied = False
-            if uses_verifier_feedback and round_best is not None:
-                continuation_sequence = str(round_best.binder_seq)
-                if continuation_sequence != raw_argmax_sequence:
-                    continuation_logits = softly_anchor_mutation_logits(
-                        next_logits,
-                        parent_sequence=raw_argmax_sequence,
-                        child_sequence=continuation_sequence,
-                        mutable_mask=mutable_mask,
-                        anchor_margin=continuation_soft_anchor_margin,
-                    )
-                    verifier_feedback_applied = True
-            if trajectory_dir is not None:
-                torch.save(
-                    {
-                        "outer_step": outer_step,
-                        "seed": chunk_seed,
-                        "sequence": continuation_sequence,
-                        "sequence_hash": _sequence_hash(
-                            continuation_sequence
-                        ),
-                        "raw_argmax_sequence": raw_argmax_sequence,
-                        "raw_argmax_sequence_hash": _sequence_hash(
-                            raw_argmax_sequence
-                        ),
-                        "parent_sequence": current_sequence,
-                        "parent_sequence_hash": _sequence_hash(current_sequence),
-                        "logits": continuation_logits.detach().cpu(),
-                        "continuation_policy": continuation_policy,
-                        "verifier_feedback_applied": (
-                            verifier_feedback_applied
-                        ),
-                    },
-                    trajectory_dir / f"outer_step_{outer_step + 1:04d}.pt",
-                )
-                _ESMArtifactRecorder._append_jsonl(
-                    trajectory_dir / "outer_steps.jsonl",
-                    {
-                        "trajectory_index": trajectory_index,
-                        "outer_step": outer_step,
-                        "budget_step": budget_step,
-                        "seed": chunk_seed,
-                        "parent_sequence": current_sequence,
-                        "sequence": continuation_sequence,
-                        "edits": _sequence_edits(
-                            current_sequence,
-                            continuation_sequence,
-                        ),
-                        "raw_argmax_sequence": raw_argmax_sequence,
-                        "raw_argmax_edits": _sequence_edits(
-                            current_sequence,
-                            raw_argmax_sequence,
-                        ),
-                        "soft_steps": soft_steps,
-                        "verified_candidate_count": len(verified_results),
-                        "round_best_sequence": (
-                            str(round_best.binder_seq)
-                            if verified_results
-                            else None
-                        ),
-                        "round_best_loss": (
-                            float(round_best.total_loss)
-                            if verified_results
-                            else None
-                        ),
-                        "continuation_policy": continuation_policy,
-                        "verifier_feedback_to_trajectory": (
-                            uses_verifier_feedback
-                        ),
-                        "verifier_feedback_applied": (
-                            verifier_feedback_applied
-                        ),
-                    },
-                )
-            current_sequence = continuation_sequence
-            current_logits = continuation_logits
-
-        final_result = _verify_with_cache(
-            backend,
-            verifier_cache,
-            binder_seq=current_sequence,
-            target_seq=target_seq,
-            seed=shared_verify_seed,
-            hotspot_params=hotspot_params,
-        )
-        final_loss = float(final_result.total_loss)
-        if (
-            trajectory_best_result is None
-            or final_loss < float(trajectory_best_result.total_loss)
-        ):
-            trajectory_best_result = final_result
-        trajectory_best_loss = float(trajectory_best_result.total_loss)
-        trajectory_best_losses.append(trajectory_best_loss)
-        if (
-            global_best_result is None
-            or trajectory_best_loss < float(global_best_result.total_loss)
-        ):
-            global_best_result = trajectory_best_result
-
-        if trajectory_dir is not None:
-            torch.save(
-                {
-                    "sequence": current_sequence,
-                    "sequence_hash": _sequence_hash(current_sequence),
-                    "logits": current_logits.detach().cpu(),
-                    "trajectory_seed": trajectory_seed,
-                },
-                trajectory_dir / "final_logits.pt",
-            )
-        trajectory_summary = {
-            "trajectory_index": trajectory_index,
-            "trajectory_seed": trajectory_seed,
-            "verifier_seed": shared_verify_seed,
-            "allocated_outer_steps": allocated_outer_steps,
-            "soft_steps_per_outer_step": soft_steps,
-            "total_soft_steps": allocated_outer_steps * soft_steps,
-            "initial_logits_checkpoint": (
-                initial_logits_checkpoint_paths[trajectory_index]
-                if initial_logits_checkpoint_paths
-                else None
-            ),
-            "initial_sequence": initial_sequence,
-            "initial_sequence_hash": _sequence_hash(initial_sequence),
-            "initial_reference_loss": (
-                float(initial_reference_result.total_loss)
-                if initial_reference_result is not None
-                else None
-            ),
-            "final_sequence": current_sequence,
-            "final_sequence_hash": _sequence_hash(current_sequence),
-            "final_loss": final_loss,
-            "final_loss_dict": _loss_dict_for_artifact(final_result),
-            "final_summary_confidence": _json_ready(
-                _summary_without_structure(
-                    dict(getattr(final_result, "summary_confidence", {}) or {})
-                )
-            ),
-            "verified_candidate_count": trajectory_verified_candidate_count,
-            "best_sequence": str(trajectory_best_result.binder_seq),
-            "best_sequence_hash": _sequence_hash(
-                str(trajectory_best_result.binder_seq)
-            ),
-            "best_loss": trajectory_best_loss,
-            "best_loss_dict": _loss_dict_for_artifact(
-                trajectory_best_result
-            ),
-            "continuation_policy": continuation_policy,
-            "verifier_feedback_to_trajectory": uses_verifier_feedback,
-            "passed": (
-                trajectory_best_loss <= float(pass_loss_threshold)
-                if pass_loss_threshold is not None
-                else None
-            ),
-        }
-        trajectory_summaries.append(trajectory_summary)
-        if trajectory_summary_path is not None:
-            _ESMArtifactRecorder._write_json_atomic(
-                trajectory_summary_path,
-                trajectory_summary,
-            )
-        artifact_recorder.write_checkpoint(
-            stage="best_of_n_chunked",
-            step=trajectory_index,
-            label="trajectory_final",
-            result=final_result,
-            selected_sequence=current_sequence,
-            parent_sequence=initial_sequence,
-            is_global_best=False,
-        )
-        logger.info(
-            "Chunked Best-of-N trajectory %d/%d | outer_steps=%d "
-            "soft_steps=%d final_loss=%.4f",
-            trajectory_index + 1,
-            best_of_n,
-            allocated_outer_steps,
-            allocated_outer_steps * soft_steps,
-            final_loss,
-        )
-
-    if global_best_result is None:
-        raise RuntimeError("Chunked ESMFold2 Best-of-N produced no final results")
-
-    global_best_sequence = str(global_best_result.binder_seq)
-    pass_count = (
-        sum(bool(item["passed"]) for item in trajectory_summaries)
-        if pass_loss_threshold is not None
-        else None
-    )
-    summary = {
-        "strategy": "best_of_n_chunked",
-        "best_of_n": best_of_n,
-        "total_outer_steps": total_outer_steps,
-        "outer_step_allocation": outer_step_allocation,
-        "soft_steps_per_outer_step": soft_steps,
-        "total_soft_steps": total_outer_steps * soft_steps,
-        "shared_verifier_seed": shared_verify_seed,
-        "continuation_policy": continuation_policy,
-        "continuation_soft_anchor_margin": (
-            continuation_soft_anchor_margin
-        ),
-        "intermediate_verifier_selection": uses_verifier_feedback,
-        "mutation_candidate_branching": False,
-        "verifier_feedback_to_trajectory": uses_verifier_feedback,
-        "logits_carry_policy": (
-            "verifier_best_soft_anchor"
-            if uses_verifier_feedback
-            else "raw_argmax_unanchored"
-        ),
-        "verifier_candidates_per_outer_step": (
-            verifier_candidates_per_outer_step
-        ),
-        "configured_full_verifier_budget": (
-            best_of_n
-            + total_outer_steps * verifier_candidates_per_outer_step
-        ),
-        "candidate_verification_attempts": candidate_verification_attempts,
-        "actual_full_verifier_attempts": (
-            best_of_n + candidate_verification_attempts
-        ),
-        "unique_verified_sequence_count": (
-            len(verifier_cache)
-            if resumed_trajectory_count == 0
-            else None
-        ),
-        "resumed_trajectory_count": resumed_trajectory_count,
-        "best_sequence": global_best_sequence,
-        "best_sequence_hash": _sequence_hash(global_best_sequence),
-        "best_loss": float(global_best_result.total_loss),
-        "mean_trajectory_final_loss": statistics.fmean(trajectory_best_losses),
-        "std_trajectory_final_loss": (
-            statistics.pstdev(trajectory_best_losses)
-            if len(trajectory_best_losses) > 1
-            else 0.0
-        ),
-        "pass_loss_threshold": pass_loss_threshold,
-        "passing_trajectory_count": pass_count,
-        "pass_at_n": (
-            bool(pass_count and pass_count > 0)
-            if pass_loss_threshold is not None
-            else None
-        ),
-        "trajectory_summaries": trajectory_summaries,
-        "artifact_dir": str(artifact_dir) if artifact_dir is not None else None,
-    }
-    artifact_recorder.write_checkpoint(
-        stage="best_of_n_chunked",
-        step=best_of_n,
-        label="overall_best",
-        result=global_best_result,
-        selected_sequence=global_best_sequence,
-        parent_sequence=None,
-        is_global_best=True,
-    )
-    artifact_recorder.write_summary(**summary)
-    logger.info(
-        "ESMFold2 chunked Best-of-N complete | N=%d allocation=%s "
-        "best=%.4f mean=%.4f std=%.4f",
-        best_of_n,
-        outer_step_allocation,
-        float(global_best_result.total_loss),
-        float(summary["mean_trajectory_final_loss"]),
-        float(summary["std_trajectory_final_loss"]),
-    )
-    return global_best_sequence, global_best_sequence, trajectory_best_losses
 
 
 def _normalize_mutable_mask(
@@ -3505,51 +1888,6 @@ def _hotspot_proposal_weight_for_verified_state(
     return configured
 
 
-def _merge_preview_losses_for_routing(
-    backend: Any,
-    preview_cache: Dict[str, Dict[str, float]],
-    loss_vector: Dict[str, Any],
-    *,
-    binder_seq: str,
-    target_seq: Union[str, Sequence[str]],
-    seed: Optional[int],
-    hotspot_params: Optional[Dict[str, Any]] = None,
-) -> Dict[str, float]:
-    """Merge optional lightweight ESMFold2 preview losses into a node vector."""
-
-    if not hasattr(backend, "preview_loss_dict"):
-        return {}
-    required_keys = ["inter_contact_loss", "intra_contact_loss", "glob_loss"]
-    if hotspot_params:
-        required_keys.append("hotspot_contact_loss")
-    if all(key in loss_vector for key in required_keys):
-        return {}
-    if binder_seq not in preview_cache:
-        try:
-            preview_kwargs = dict(
-                binder_seq=binder_seq,
-                target_seq=target_seq,
-                seed=seed,
-            )
-            if _callable_accepts_argument(backend.preview_loss_dict, "hotspot_params"):
-                preview_kwargs["hotspot_params"] = dict(hotspot_params) if hotspot_params else None
-            preview = backend.preview_loss_dict(**preview_kwargs)
-        except Exception as exc:  # pragma: no cover - diagnostic fallback path
-            logger.warning(
-                "ESM StageB preview routing loss failed for %s: %s",
-                binder_seq[:20],
-                exc,
-            )
-            preview_cache[binder_seq] = {}
-        else:
-            preview_cache[binder_seq] = {
-                str(key): float(scalar)
-                for key, value in dict(preview or {}).items()
-                if (scalar := _finite_float(value)) is not None
-            }
-    for key, value in preview_cache[binder_seq].items():
-        loss_vector.setdefault(key, value)
-    return preview_cache[binder_seq]
 
 
 def _stageb_preview_objective(
@@ -3874,6 +2212,7 @@ def _load_stagea_handoff_checkpoint(
     hotspot_params: Optional[Dict[str, Any]],
     verifier_contract: Dict[str, Any],
     allow_verifier_mismatch: bool = False,
+    init_binder_seq: Optional[str] = None,
 ) -> Dict[str, Any]:
     path = Path(checkpoint_path).expanduser().resolve()
     if not path.is_file():
@@ -3912,12 +2251,25 @@ def _load_stagea_handoff_checkpoint(
     completed_steps = int(payload.get("completed_stagea_steps", -1))
     if completed_steps < 0 or len(payload.get("losses_history", [])) != completed_steps:
         raise ValueError("StageA handoff checkpoint has an inconsistent loss history")
+    reference_sequence = None
+    if init_binder_seq is not None:
+        reference_sequence = str(init_binder_seq).strip().upper()
+        if len(reference_sequence) != int(L_binder):
+            raise ValueError("init_binder_seq length does not match L_binder")
+        if set(reference_sequence) - set(ESM_AA_ORDER):
+            raise ValueError("init_binder_seq contains invalid amino acids")
     for entry in entries:
         result_payload = dict(entry.get("result", {}))
         sequence = str(result_payload.get("binder_seq", ""))
         logits = entry.get("proposal_logits")
         if len(sequence) != int(L_binder):
             raise ValueError("StageA handoff checkpoint contains an invalid binder sequence")
+        if reference_sequence is not None:
+            for index, is_mutable in enumerate(mutable_mask):
+                if not is_mutable and sequence[index] != reference_sequence[index]:
+                    raise ValueError(
+                        f"StageA handoff checkpoint changes fixed binder position {index + 1}"
+                    )
         if not isinstance(logits, torch.Tensor) or tuple(logits.shape) != (
             int(L_binder),
             len(ESM_AA_ORDER),
@@ -4031,7 +2383,7 @@ def run_esmfold2_mcts_hallucination(
     ] = None,
     mcts_C: float = 1.0,
     mcts_max_nodes: int = 5000,
-    mcts_strategy: str = "legacy",
+    mcts_strategy: str = "two_stage",
     mcts_bootstrap_steps: int = 50,
     mcts_bootstrap_patience: int = 10,
     mcts_bootstrap_min_delta: float = 0.02,
@@ -4056,7 +2408,6 @@ def run_esmfold2_mcts_hallucination(
     esmfold2_stagea_soft_anchor_margin: float = 0.1,
     esmfold2_stagea_paired_verifier_seed: bool = True,
     esmfold2_stagea_verifier_seed: Optional[int] = None,
-    esmfold2_raw_lineage_annealing_horizon: int = 150,
     esmfold2_stageb_soft_steps: Optional[int] = None,
     esmfold2_stageb_discrete_rerank: bool = True,
     esmfold2_stageb_rerank_pool_size: int = 20,
@@ -4069,7 +2420,6 @@ def run_esmfold2_mcts_hallucination(
     esmfold2_stageb_handoff_quality_tolerance: float = 0.05,
     esmfold2_stageb_paired_verifier_seed: bool = True,
     esmfold2_stageb_verifier_seed: Optional[int] = None,
-    esmfold2_final_polish: bool = False,
     esmfold2_stagea_handoff_checkpoint_interval: int = 10,
     esmfold2_resume_handoff_checkpoint: Optional[Union[str, os.PathLike[str]]] = None,
     esmfold2_resume_reverify_roots: bool = False,
@@ -4081,12 +2431,9 @@ def run_esmfold2_mcts_hallucination(
       - verify(binder_seq, target_seq, seed) -> MCTS-compatible result
       - propose(current_seq, target_seq, global_step, K/B/T args, seed) -> sequences
 
-    ``stage_a_only`` keeps the ESMFold2 Stage-A proposal/verify loop for all
-    steps.  ``legacy`` is kept as a backwards-compatible alias for that mode.
-    ``two_stage`` uses Stage A as bootstrap, then hands verified candidates to
-    the action-level strict MCTS tree and uses ESMFold2-native group routing for
-    Stage B.  ``continuous_stage_a`` is a diagnostic mode: run one continuous
-    soft-logit update from the best phase0 root, then verify the argmax sequence.
+    Stage A explores soft sequence proposals; Stage B refines verified
+    candidates with action-level MCTS. A budget ending during Stage A can
+    produce a handoff checkpoint without entering Stage B.
     """
 
     if backend is None:
@@ -4140,25 +2487,9 @@ def run_esmfold2_mcts_hallucination(
         if stageb_max_mutations_per_seq is not None
         else 1
     )
-    strategy = str(mcts_strategy or "legacy").strip().lower()
-    if strategy == "strict":
-        strategy = "two_stage"
-    if strategy == "legacy":
-        strategy = "stage_a_only"
-    if stagea_candidate_strategy == "positive_score_guarded" and strategy not in {
-        "stage_a_only", "two_stage",
-    }:
-        raise ValueError("positive_score_guarded requires Stage-A candidate branching")
-    if strategy not in {
-        "stage_a_only",
-        "two_stage",
-        "continuous_stage_a",
-        "raw_lineage_stage_a",
-    }:
-        raise ValueError(
-            "ESMFold2 backend supports mcts_strategy stage_a_only, "
-            "two_stage, continuous_stage_a, or raw_lineage_stage_a"
-        )
+    strategy = str(mcts_strategy).strip().lower()
+    if strategy != "two_stage":
+        raise ValueError("ProteoCraft supports only mcts_strategy='two_stage'")
     target_key = _normalize_target_key(target_seq)
     stagea_paired_verifier_seed = bool(esmfold2_stagea_paired_verifier_seed)
     stagea_shared_verify_seed = (
@@ -4295,11 +2626,6 @@ def run_esmfold2_mcts_hallucination(
     stagea_soft_anchor_margin = float(esmfold2_stagea_soft_anchor_margin)
     if stagea_soft_anchor_margin <= 0.0:
         raise ValueError("esmfold2_stagea_soft_anchor_margin must be positive")
-    raw_lineage_annealing_horizon = int(
-        esmfold2_raw_lineage_annealing_horizon
-    )
-    if raw_lineage_annealing_horizon <= 0:
-        raise ValueError("esmfold2_raw_lineage_annealing_horizon must be positive")
     if stageb_soft_steps is not None and stageb_soft_steps <= 0:
         raise ValueError("esmfold2_stageb_soft_steps must be positive")
     stageb_rerank_pool_size = max(int(esmfold2_stageb_rerank_pool_size), 1)
@@ -4354,14 +2680,6 @@ def run_esmfold2_mcts_hallucination(
     if checkpoint_interval < 0:
         raise ValueError("esmfold2_stagea_handoff_checkpoint_interval must be non-negative")
     if (
-        esmfold2_resume_handoff_checkpoint is not None
-        and strategy not in {"stage_a_only", "two_stage"}
-    ):
-        raise ValueError(
-            "StageA handoff checkpoints can only resume into stage_a_only "
-            "or two_stage MCTS"
-        )
-    if (
         esmfold2_initial_logits_checkpoint is not None
         and esmfold2_resume_handoff_checkpoint is not None
     ):
@@ -4379,7 +2697,7 @@ def run_esmfold2_mcts_hallucination(
         save_visualization_trace=save_visualization_trace,
     )
 
-    tree = LegacyMCTSTree(
+    tree = StageATree(
         C=mcts_C,
         max_nodes=mcts_max_nodes,
         selection_mode=stagea_root_selection_mode,
@@ -4396,6 +2714,7 @@ def run_esmfold2_mcts_hallucination(
             hotspot_params=hotspot_params,
             verifier_contract=_stagea_handoff_verifier_contract(backend_config),
             allow_verifier_mismatch=bool(esmfold2_resume_reverify_roots),
+            init_binder_seq=init_binder_seq,
         )
         completed_steps = int(resume_state["completed_stagea_steps"])
         if completed_steps >= N_steps:
@@ -4454,18 +2773,11 @@ def run_esmfold2_mcts_hallucination(
             else "sequence_specific"
         ),
     )
-    if strategy == "raw_lineage_stage_a":
-        logger.info(
-            "ESMFold2 raw-lineage diagnostic: chunks=%d annealing_horizon=%d "
-            "parent_anchor=false",
-            N_steps,
-            raw_lineage_annealing_horizon,
-        )
     if resume_state is not None:
         logger.info(
             "Resuming %s from StageA handoff checkpoint: %s "
             "(completed_stagea_steps=%d reverify_roots=%s verifier_contract_matches=%s)",
-            "StageA" if strategy == "stage_a_only" else "StageB",
+            "StageB",
             resume_state["checkpoint_path"],
             int(resume_state["completed_stagea_steps"]),
             bool(esmfold2_resume_reverify_roots),
@@ -4555,11 +2867,7 @@ def run_esmfold2_mcts_hallucination(
     phase0_artifact_stage = "handoff_resume" if resume_state is not None else "phase0"
     for idx, (binder_seq, _) in enumerate(phase0_states):
         phase0_verify_seed = (
-            stagea_shared_verify_seed
-            if resume_state is not None
-            and strategy == "stage_a_only"
-            and stagea_paired_verifier_seed
-            else stageb_shared_verify_seed
+            stageb_shared_verify_seed
             if resume_state is not None and stageb_paired_verifier_seed
             else (
                 stagea_shared_verify_seed
@@ -4625,7 +2933,7 @@ def run_esmfold2_mcts_hallucination(
     best_loss = float(best_result.total_loss)
     # Phase0 sequences are already row-wise argmaxes of their own logits.
     # Preserve official_free/exact uncertainty verbatim so handoff, resume,
-    # and final polish do not silently re-anchor mutable positions to 2.0.
+    # do not silently re-anchor mutable positions to 2.0.
     best_logits = proposal_logits_by_sequence[best_seq].detach().cpu().clone()
     proposal_logits_by_sequence[best_seq] = best_logits
     losses_history: List[float] = (
@@ -4751,434 +3059,12 @@ def run_esmfold2_mcts_hallucination(
         is_global_best=True,
     )
 
-    def _run_final_polish_if_enabled(
-        *,
-        current_best_result: Any,
-        current_best_seq: str,
-        current_best_loss: float,
-    ) -> Tuple[Any, str, str, float]:
-        if not bool(esmfold2_final_polish):
-            return current_best_result, current_best_seq, current_best_seq, current_best_loss
 
-        polish_step = len(losses_history)
-        polish_seed = _stable_seed(seed, "esm_final_polish", target_key, current_best_seq)
-        polish_logits = (
-            best_logits
-            if current_best_seq == best_seq
-            else proposal_logits_by_sequence.get(current_best_seq)
-        )
-        polish_logits = _anchor_proposal_logits(
-            polish_logits,
-            current_best_seq,
-            mutable_mask,
-        ).detach().cpu().clone()
-        proposal_hotspot_weight = _hotspot_proposal_weight_for_verified_state(
-            current_best_result,
-            configured_weight=hotspot_weight,
-            satisfied_weight=hotspot_satisfied_proposal_weight,
-        )
 
-        proposal_batch = _call_backend_continuous_design(
-            backend,
-            current_seq=current_best_seq,
-            target_seq=target_seq,
-            global_step=polish_step,
-            seed=polish_seed,
-            mutable_mask=mutable_mask,
-            proposal_logits=polish_logits,
-            hotspot_params=hotspot_params,
-            hotspot_weight_override=proposal_hotspot_weight,
-            track_confidence_override=True,
-            soft_steps_override=stagea_soft_steps,
-        )
-        _write_soft_step_artifacts(
-            artifact_recorder,
-            stage="final_polish",
-            step=polish_step,
-            selected_sequence=current_best_seq,
-            batch=proposal_batch,
-        )
-        if proposal_batch.logits_after is not None:
-            proposal_logits_by_sequence[current_best_seq] = proposal_batch.logits_after.detach().cpu().clone()
 
-        candidates = [
-            _clip_sequence_by_mutable_mask(str(seq), mutable_mask, current_best_seq)
-            for seq in _proposal_sequences_from_batch(proposal_batch, include_confidence=True)
-        ]
-        candidates = list(dict.fromkeys(seq for seq in candidates if seq))
-        if not candidates:
-            candidates = [current_best_seq]
-
-        candidate_results = []
-        for cand_seq in candidates:
-            result = _verify_with_cache(
-                backend,
-                verifier_cache,
-                binder_seq=cand_seq,
-                target_seq=target_seq,
-                seed=_stable_seed(seed, "esm_final_polish_verify", target_key, cand_seq),
-                hotspot_params=hotspot_params,
-            )
-            candidate_results.append(result)
-            _write_candidate_artifact(
-                artifact_recorder,
-                stage="final_polish",
-                step=polish_step,
-                parent_sequence=current_best_seq,
-                result=result,
-            )
-
-        round_best = min(candidate_results, key=lambda result: float(result.total_loss))
-        final_best_result = current_best_result
-        final_best_seq = current_best_seq
-        final_best_loss = current_best_loss
-        polish_improved = float(round_best.total_loss) < current_best_loss
-        if polish_improved:
-            final_best_result = round_best
-            final_best_seq = str(round_best.binder_seq)
-            final_best_loss = float(round_best.total_loss)
-            _remember_global_best(round_best, proposal_batch.logits_after)
-
-        losses_history.append(final_best_loss)
-        artifact_recorder.write_step(
-            stage="final_polish",
-            step=polish_step,
-            selected_sequence=current_best_seq,
-            candidate_count=len(candidate_results),
-            round_best_loss=float(round_best.total_loss),
-            global_best_loss=final_best_loss,
-            best_sequence=final_best_seq,
-            polish_sequence=str(round_best.binder_seq),
-            polish_improved=polish_improved,
-            proposal_hotspot_weight=proposal_hotspot_weight,
-            **_proposal_confidence_summary(proposal_batch),
-        )
-        artifact_recorder.write_checkpoint(
-            stage="final_polish",
-            step=polish_step,
-            label="round_best",
-            result=round_best,
-            selected_sequence=current_best_seq,
-            parent_sequence=current_best_seq,
-            is_global_best=(str(round_best.binder_seq) == final_best_seq),
-        )
-        logger.info(
-            "ESM final polish | selected=%s K=%d round_best=%.4f global_best=%.4f",
-            current_best_seq[:20],
-            len(candidate_results),
-            float(round_best.total_loss),
-            final_best_loss,
-        )
-        return final_best_result, final_best_seq, final_best_seq, final_best_loss
-
-    if strategy == "continuous_stage_a":
-        selected_node = stagea_node_by_sequence.get(best_seq) or tree.select()
-        current_seq = str(selected_node.sequence)
-        proposal_hotspot_weight = _hotspot_proposal_weight_for_verified_state(
-            verifier_cache.get(current_seq),
-            configured_weight=hotspot_weight,
-            satisfied_weight=hotspot_satisfied_proposal_weight,
-        )
-        proposal_batch = _call_backend_continuous_design(
-            backend,
-            current_seq=current_seq,
-            target_seq=target_seq,
-            global_step=0,
-            seed=_stable_seed(seed, "esm_continuous_stage_a", target_key, current_seq),
-            mutable_mask=mutable_mask,
-            proposal_logits=selected_node.logits,
-            reference_coordinates=selected_node.coordinate,
-            hotspot_params=hotspot_params,
-            hotspot_weight_override=proposal_hotspot_weight,
-            track_confidence_override=None,
-            soft_steps_override=stagea_soft_steps,
-        )
-        _write_soft_step_artifacts(
-            artifact_recorder,
-            stage="continuous_stage_a",
-            step=0,
-            selected_sequence=current_seq,
-            batch=proposal_batch,
-        )
-        if proposal_batch.logits_after is not None:
-            selected_node.logits = proposal_batch.logits_after.detach().cpu().clone()
-            proposal_logits_by_sequence[current_seq] = selected_node.logits
-        candidates = [
-            _clip_sequence_by_mutable_mask(str(seq), mutable_mask, current_seq)
-            for seq in _proposal_sequences_from_batch(proposal_batch)
-        ]
-        candidates = list(dict.fromkeys(seq for seq in candidates if seq))
-        if not candidates:
-            candidates = [current_seq]
-
-        candidate_results = []
-        for cand_seq in candidates:
-            result = _verify_with_cache(
-                backend,
-                verifier_cache,
-                binder_seq=cand_seq,
-                target_seq=target_seq,
-                seed=_stable_seed(seed, "esm_continuous_verify", target_key, cand_seq),
-                hotspot_params=hotspot_params,
-            )
-            candidate_results.append(result)
-            _write_candidate_artifact(
-                artifact_recorder,
-                stage="continuous_stage_a",
-                step=0,
-                parent_sequence=current_seq,
-                result=result,
-            )
-
-        round_best = min(candidate_results, key=lambda result: float(result.total_loss))
-        expandable_results = [
-            result for result in candidate_results
-            if str(result.binder_seq) != current_seq
-        ]
-        if expandable_results:
-            new_nodes = tree.expand(selected_node, expandable_results)
-            for node in new_nodes:
-                node.logits = _anchor_proposal_logits(
-                    proposal_batch.logits_after,
-                    node.sequence,
-                    mutable_mask,
-                )
-                proposal_logits_by_sequence[str(node.sequence)] = node.logits
-                artifact_recorder.write_mcts_node(
-                    **_mcts_node_artifact(
-                        stage="continuous_stage_a",
-                        node=node,
-                        step_created=0,
-                        extra={"source": "continuous_argmax"},
-                    )
-                )
-                artifact_recorder.write_mcts_edge(
-                    **_mcts_edge_artifact(
-                        stage="continuous_stage_a",
-                        parent=selected_node,
-                        child=node,
-                        step_created=0,
-                    )
-                )
-            tree.backpropagate(selected_node, [float(result.total_loss) for result in expandable_results])
-        if float(round_best.total_loss) < best_loss:
-            _remember_global_best(round_best, proposal_batch.logits_after)
-        losses_history.append(best_loss)
-        artifact_recorder.write_step(
-            stage="continuous_stage_a",
-            step=0,
-            selected_node_id=int(selected_node.node_id),
-            selected_sequence=current_seq,
-            candidate_count=len(candidate_results),
-            round_best_loss=float(round_best.total_loss),
-            global_best_loss=best_loss,
-            best_sequence=best_seq,
-            proposal_hotspot_weight=proposal_hotspot_weight,
-            **_proposal_confidence_summary(proposal_batch),
-        )
-        artifact_recorder.write_checkpoint(
-            stage="continuous_stage_a",
-            step=0,
-            label="round_best",
-            result=round_best,
-            selected_sequence=current_seq,
-            parent_sequence=current_seq,
-            is_global_best=(str(round_best.binder_seq) == best_seq),
-        )
-        artifact_recorder.write_summary(
-            best_sequence=best_seq,
-            final_sequence=str(round_best.binder_seq),
-            best_loss=best_loss,
-            n_steps=len(losses_history),
-            strategy=strategy,
-            artifact_dir=str(artifact_dir) if artifact_dir is not None else None,
-            initial_logits_checkpoint_source=(
-                str(Path(esmfold2_initial_logits_checkpoint).expanduser())
-                if esmfold2_initial_logits_checkpoint is not None
-                else None
-            ),
-            initial_logits_checkpoint_paths=initial_logits_checkpoint_paths,
-            **hotspot_summary,
-        )
-        logger.info(
-            "ESM continuous StageA | selected=%s round_best=%s round_best_loss=%.4f best=%.4f",
-            current_seq[:20],
-            str(round_best.binder_seq)[:20],
-            float(round_best.total_loss),
-            best_loss,
-        )
-        return best_seq, str(round_best.binder_seq), losses_history
-
-    if strategy == "raw_lineage_stage_a":
-        if stagea_soft_steps is None:
-            raise ValueError(
-                "raw_lineage_stage_a requires esmfold2_stagea_soft_steps"
-            )
-        selected_node = stagea_node_by_sequence.get(best_seq) or tree.select()
-        raw_sequence = str(selected_node.sequence)
-        raw_logits = selected_node.logits.detach().cpu().clone()
-        final_batch: Optional[ESMFold2ProposalBatch] = None
-
-        for chunk_index in range(N_steps):
-            soft_step_offset = chunk_index * int(stagea_soft_steps)
-            is_final_chunk = chunk_index == N_steps - 1
-            # This diagnostic must match one official continuous trajectory.
-            # Intermediate argmax states are not full-verifier states, so using
-            # the verifier-aware saturation rule here would change the proposal
-            # objective between chunks.
-            proposal_hotspot_weight = hotspot_weight
-            final_batch = _call_backend_continuous_design(
-                backend,
-                current_seq=raw_sequence,
-                target_seq=target_seq,
-                global_step=soft_step_offset,
-                seed=seed,
-                mutable_mask=mutable_mask,
-                proposal_logits=raw_logits,
-                hotspot_params=hotspot_params,
-                hotspot_weight_override=proposal_hotspot_weight,
-                track_confidence_override=is_final_chunk,
-                soft_steps_override=stagea_soft_steps,
-                temperature_step_offset=soft_step_offset,
-                temperature_total_steps=raw_lineage_annealing_horizon,
-                preserve_proposal_logits=True,
-            )
-            _write_soft_step_artifacts(
-                artifact_recorder,
-                stage="raw_lineage_stage_a",
-                step=chunk_index,
-                selected_sequence=raw_sequence,
-                batch=final_batch,
-            )
-            if final_batch.logits_after is None:
-                raise ValueError(
-                    "raw_lineage_stage_a requires backend logits_after"
-                )
-            raw_logits = final_batch.logits_after.detach().cpu().clone()
-            raw_sequence = sequence_from_logits_argmax(
-                raw_logits,
-                current_seq=raw_sequence,
-                mutable_mask=mutable_mask,
-            )
-            losses_history.append(best_loss)
-            artifact_recorder.write_step(
-                stage="raw_lineage_stage_a",
-                step=chunk_index,
-                selected_sequence=str(selected_node.sequence),
-                raw_sequence=raw_sequence,
-                soft_step_offset=soft_step_offset,
-                soft_step_end=soft_step_offset + int(stagea_soft_steps),
-                verifier_deferred=not is_final_chunk,
-                global_best_loss=best_loss,
-                best_sequence=best_seq,
-                proposal_hotspot_weight=proposal_hotspot_weight,
-                **_proposal_confidence_summary(final_batch),
-            )
-
-        if final_batch is None:
-            raise ValueError("raw_lineage_stage_a requires at least one chunk")
-
-        final_candidates = [
-            _clip_sequence_by_mutable_mask(
-                str(candidate),
-                mutable_mask,
-                raw_sequence,
-            )
-            for candidate in _proposal_sequences_from_batch(
-                final_batch,
-                include_confidence=True,
-            )
-        ]
-        final_candidates = list(
-            dict.fromkeys(candidate for candidate in final_candidates if candidate)
-        )
-        if raw_sequence not in final_candidates:
-            final_candidates.append(raw_sequence)
-
-        final_results = []
-        for candidate in final_candidates:
-            result = _verify_with_cache(
-                backend,
-                verifier_cache,
-                binder_seq=candidate,
-                target_seq=target_seq,
-                seed=(
-                    stagea_shared_verify_seed
-                    if stagea_paired_verifier_seed
-                    else _stable_seed(
-                        seed,
-                        "esm_verify",
-                        target_key,
-                        candidate,
-                    )
-                ),
-                hotspot_params=hotspot_params,
-            )
-            final_results.append(result)
-            _write_candidate_artifact(
-                artifact_recorder,
-                stage="raw_lineage_stage_a",
-                step=N_steps - 1,
-                parent_sequence=str(selected_node.sequence),
-                result=result,
-            )
-
-        round_best = min(final_results, key=lambda result: float(result.total_loss))
-        if float(round_best.total_loss) < best_loss:
-            _remember_global_best(
-                round_best,
-                raw_logits,
-                anchor_logits=(str(round_best.binder_seq) != raw_sequence),
-            )
-        losses_history[-1] = best_loss
-        artifact_recorder.write_checkpoint(
-            stage="raw_lineage_stage_a",
-            step=N_steps - 1,
-            label="round_best",
-            result=round_best,
-            selected_sequence=str(selected_node.sequence),
-            parent_sequence=str(selected_node.sequence),
-            is_global_best=(str(round_best.binder_seq) == best_seq),
-        )
-        artifact_recorder.write_summary(
-            best_sequence=best_seq,
-            final_sequence=str(round_best.binder_seq),
-            best_loss=best_loss,
-            n_steps=len(losses_history),
-            strategy=strategy,
-            artifact_dir=str(artifact_dir) if artifact_dir is not None else None,
-            raw_lineage_chunks=N_steps,
-            raw_lineage_soft_steps_per_chunk=stagea_soft_steps,
-            raw_lineage_annealing_horizon=raw_lineage_annealing_horizon,
-            raw_lineage_final_candidate_count=len(final_results),
-            stagea_paired_verifier_seed=stagea_paired_verifier_seed,
-            initial_logits_checkpoint_source=(
-                str(Path(esmfold2_initial_logits_checkpoint).expanduser())
-                if esmfold2_initial_logits_checkpoint is not None
-                else None
-            ),
-            initial_logits_checkpoint_paths=initial_logits_checkpoint_paths,
-            **hotspot_summary,
-        )
-        logger.info(
-            "ESM raw-lineage StageA | chunks=%d final_candidates=%d "
-            "round_best=%.4f global_best=%.4f",
-            N_steps,
-            len(final_results),
-            float(round_best.total_loss),
-            best_loss,
-        )
-        return best_seq, str(round_best.binder_seq), losses_history
-
-    if resume_state is not None and strategy == "two_stage":
+    if resume_state is not None:
         stagea_start_step = 0
         stagea_steps = 0
-    elif resume_state is not None:
-        stagea_start_step = int(resume_state["completed_stagea_steps"])
-        stagea_steps = N_steps
-    elif strategy == "stage_a_only":
-        stagea_start_step = 0
-        stagea_steps = N_steps
     else:
         stagea_start_step = 0
         min_bootstrap = max(int(mcts_bootstrap_steps), 0)
@@ -5186,8 +3072,6 @@ def run_esmfold2_mcts_hallucination(
         stagea_steps = min(N_steps, max_bootstrap)
         if min_bootstrap > 0:
             stagea_steps = min(N_steps, max(stagea_steps, min_bootstrap))
-        if N_steps > 0 and stagea_steps >= N_steps:
-            stagea_steps = max(N_steps - 1, 0)
 
     stagea_best = best_loss
     stagea_stale = 0
@@ -5467,11 +3351,14 @@ def run_esmfold2_mcts_hallucination(
 
     _save_handoff_state(final=True)
 
-    if strategy == "stage_a_only" or len(losses_history) >= N_steps:
-        best_result, best_seq, final_seq, best_loss = _run_final_polish_if_enabled(
-            current_best_result=best_result,
-            current_best_seq=best_seq,
-            current_best_loss=best_loss,
+    if len(losses_history) >= N_steps:
+        final_seq = best_seq
+        artifact_recorder.write_checkpoint(
+            stage="final",
+            step=len(losses_history),
+            label="best",
+            result=best_result,
+            is_global_best=True,
         )
         artifact_recorder.write_summary(
             best_sequence=best_seq,
@@ -6140,10 +4027,13 @@ def run_esmfold2_mcts_hallucination(
             best_loss,
         )
 
-    best_result, best_seq, final_seq, best_loss = _run_final_polish_if_enabled(
-        current_best_result=best_result,
-        current_best_seq=best_seq,
-        current_best_loss=best_loss,
+    final_seq = best_seq
+    artifact_recorder.write_checkpoint(
+        stage="final",
+        step=len(losses_history),
+        label="best",
+        result=best_result,
+        is_global_best=True,
     )
     artifact_recorder.write_summary(
         best_sequence=best_seq,

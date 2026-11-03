@@ -24,7 +24,7 @@ LEGACY_SELECTION_MODES = frozenset({"global_ucb", "hierarchical_ucb"})
 
 
 @dataclass
-class LegacyMCTSNode:
+class StageANode:
     """A verified sequence node using the original loss-minimizing UCB state."""
 
     node_id: int
@@ -34,8 +34,8 @@ class LegacyMCTSNode:
     L_real: float
     W: float = field(default=0.0)
     visit_count: int = field(default=0)
-    parent: Optional["LegacyMCTSNode"] = field(default=None, repr=False)
-    children: List["LegacyMCTSNode"] = field(default_factory=list, repr=False)
+    parent: Optional["StageANode"] = field(default=None, repr=False)
+    children: List["StageANode"] = field(default_factory=list, repr=False)
     depth: int = field(default=0)
     soft_step: int = field(default=0)
 
@@ -48,16 +48,16 @@ class LegacyMCTSNode:
     def is_expanded(self) -> bool:
         return len(self.children) > 0
 
-    def get_path_to_root(self) -> List["LegacyMCTSNode"]:
+    def get_path_to_root(self) -> List["StageANode"]:
         path = []
-        node: Optional["LegacyMCTSNode"] = self
+        node: Optional["StageANode"] = self
         while node is not None:
             path.append(node)
             node = node.parent
         return path
 
 
-class LegacyMCTSTree:
+class StageATree:
     """Original whole-tree UCB MCTS used as a coarse bootstrap stage."""
 
     def __init__(
@@ -80,9 +80,9 @@ class LegacyMCTSTree:
         self.selection_mode = normalized_mode
         self.min_root_expansions = max(int(min_root_expansions), 0)
 
-        self._nodes: Dict[int, LegacyMCTSNode] = {}
+        self._nodes: Dict[int, StageANode] = {}
         self._next_id: int = 0
-        self._roots: List[LegacyMCTSNode] = []
+        self._roots: List[StageANode] = []
         self._root_expansion_counts: Dict[int, int] = {}
         self._last_selection: Dict[str, Any] = {}
         self.N_total: int = 0
@@ -92,7 +92,7 @@ class LegacyMCTSTree:
         self._next_id += 1
         return node_id
 
-    def _register_node(self, node: LegacyMCTSNode) -> None:
+    def _register_node(self, node: StageANode) -> None:
         self._nodes[node.node_id] = node
 
     def add_root_node(
@@ -101,8 +101,8 @@ class LegacyMCTSTree:
         logits: torch.Tensor,
         L_real: float,
         coordinate: Optional[torch.Tensor] = None,
-    ) -> LegacyMCTSNode:
-        node = LegacyMCTSNode(
+    ) -> StageANode:
+        node = StageANode(
             node_id=self._new_id(),
             sequence=sequence,
             logits=logits.detach().clone(),
@@ -129,14 +129,14 @@ class LegacyMCTSTree:
         return node
 
     @property
-    def roots(self) -> List[LegacyMCTSNode]:
+    def roots(self) -> List[StageANode]:
         return self._roots
 
     @property
     def total_nodes(self) -> int:
         return len(self._nodes)
 
-    def ucb_score(self, node: LegacyMCTSNode) -> float:
+    def ucb_score(self, node: StageANode) -> float:
         if self.N_total == 0:
             exploration = float("inf")
         else:
@@ -145,7 +145,7 @@ class LegacyMCTSTree:
         return exploitation + exploration
 
     @staticmethod
-    def root_for_node(node: LegacyMCTSNode) -> LegacyMCTSNode:
+    def root_for_node(node: StageANode) -> StageANode:
         root = node
         while root.parent is not None:
             root = root.parent
@@ -159,7 +159,7 @@ class LegacyMCTSTree:
     def last_selection(self) -> Dict[str, Any]:
         return dict(self._last_selection)
 
-    def root_ucb_score(self, root: LegacyMCTSNode) -> float:
+    def root_ucb_score(self, root: StageANode) -> float:
         if all(candidate is not root for candidate in self._roots):
             raise ValueError("root_ucb_score requires a registered root node")
         expansion_count = self._root_expansion_counts.get(root.node_id, 0)
@@ -174,7 +174,7 @@ class LegacyMCTSTree:
 
     def _select_hierarchical_root(
         self,
-    ) -> tuple[LegacyMCTSNode, str, Optional[float]]:
+    ) -> tuple[StageANode, str, Optional[float]]:
         under_warmup = [
             root
             for root in self._roots
@@ -208,7 +208,7 @@ class LegacyMCTSTree:
 
     def _record_selection(
         self,
-        node: LegacyMCTSNode,
+        node: StageANode,
         *,
         phase: str,
         root_score: Optional[float],
@@ -227,7 +227,7 @@ class LegacyMCTSTree:
             "root_expansion_counts": self.root_expansion_counts,
         }
 
-    def select(self) -> LegacyMCTSNode:
+    def select(self) -> StageANode:
         if not self._nodes:
             raise RuntimeError("[LegacyMCTS] Tree is empty, cannot select")
 
@@ -272,15 +272,15 @@ class LegacyMCTSTree:
 
     def expand(
         self,
-        parent: LegacyMCTSNode,
+        parent: StageANode,
         candidates: List[Any],
-    ) -> List[LegacyMCTSNode]:
+    ) -> List[StageANode]:
         if not candidates:
             return []
 
-        new_nodes: List[LegacyMCTSNode] = []
+        new_nodes: List[StageANode] = []
         for cand in candidates:
-            child = LegacyMCTSNode(
+            child = StageANode(
                 node_id=self._new_id(),
                 sequence=cand.binder_seq,
                 logits=parent.logits.detach().clone(),
@@ -308,7 +308,7 @@ class LegacyMCTSTree:
 
     def backpropagate(
         self,
-        node: LegacyMCTSNode,
+        node: StageANode,
         losses: List[float],
     ) -> None:
         count = len(losses)
@@ -367,7 +367,7 @@ class LegacyMCTSTree:
         )
         return pruned
 
-    def _remove_node(self, node: LegacyMCTSNode) -> None:
+    def _remove_node(self, node: StageANode) -> None:
         if node.parent is not None:
             if node in node.parent.children:
                 node.parent.children.remove(node)
@@ -375,18 +375,18 @@ class LegacyMCTSTree:
             self._roots.remove(node)
         del self._nodes[node.node_id]
 
-    def get_best_leaf(self) -> LegacyMCTSNode:
+    def get_best_leaf(self) -> StageANode:
         leaves = [node for node in self._nodes.values() if node.is_leaf()]
         if not leaves:
             raise RuntimeError("[LegacyMCTS] No leaf nodes in tree")
         return min(leaves, key=lambda node: node.W / max(node.visit_count, 1))
 
-    def get_best_root(self) -> LegacyMCTSNode:
+    def get_best_root(self) -> StageANode:
         if not self._roots:
             raise RuntimeError("[LegacyMCTS] No root nodes")
         return min(self._roots, key=lambda node: node.L_real)
 
-    def get_global_best(self) -> LegacyMCTSNode:
+    def get_global_best(self) -> StageANode:
         if not self._nodes:
             raise RuntimeError("[LegacyMCTS] No nodes in tree")
         return min(self._nodes.values(), key=lambda node: node.W / max(node.visit_count, 1))
