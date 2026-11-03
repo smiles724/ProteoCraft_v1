@@ -1,8 +1,6 @@
-# IFNAR2 input used for the 2026-11-02 cleanup GPU regression.
-# Source case: IFNAR2_product_current_seed43.
-# Source case.json SHA-256: 7cd94dca739aac768e129923075b0d75e7a1b06072507f04b4ecc5b563ab12a3
-# The 7EOW chain B sequence supplies the initial VHH scaffold; its CDRs are redesigned for IFNAR2.
-# Target and hotspot indices are copied from that input; the current mainline profile supplies the search settings.
+# IFNAR2 all-CDR redesign example with a 7EOW chain B VHH scaffold.
+# Hotspots use 1-based positions in the target sequence below.
+# The esmfold2_d profile supplies the search settings.
 launch_profile: esmfold2_d
 output_dir: outputs/vhh_ifnar2
 seed: 43

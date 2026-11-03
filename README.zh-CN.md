@@ -190,8 +190,8 @@ python -m build
 
 CPU 测试用小型张量和测试后端检查搜索契约、可变区域、配置、断点和安装工具。
 GitHub Actions 运行测试、安装包构建和 wheel 安装检查。
-[验证记录](docs/MIGRATION.md#validation-scope)列出了 H200 上的 IFNAR2 VHH 运行、
-对应代码版本和数值复现情况。
+[验证记录](docs/MIGRATION.md#validation-scope)包括完整 IFNAR2 VHH 搜索、
+全新环境安装、模型下载和 GPU 短测。
 
 ## 许可证与来源
 

@@ -30,9 +30,8 @@ The default search budget is summarized below:
 
 The default profile is
 `proteocraft/configs/proteocraft_profiles/esmfold2_d.yaml`.
-Its numerical values are retained from the 2026-11-01 mainline. Explicit CLI
-arguments override the profile. Changing search budgets or kernel modes can
-change outcomes; compare them with matched inputs, seeds and evaluation rules.
+Explicit CLI arguments override the profile. Changing search budgets or kernel
+modes can change outcomes; compare them with matched inputs, seeds and evaluation rules.
 
 ## Code map
 

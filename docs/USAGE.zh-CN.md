@@ -117,7 +117,7 @@ python benchmark/script/run_esmfold2_vhh_redesign.py \
   --config benchmark/yaml/vhh/esmfold2_vhh_ifnar2_example.yaml --device cuda:0
 ```
 
-它沿用清理回归实验的 217 残基 IFNAR2 靶标输入，以及来自 7EOW B 链的
+示例使用 217 残基的 IFNAR2 靶标序列，以及来自 7EOW B 链的
 128 残基起始 VHH。三个 CDR 共 37 个位置可变，其余 91 个位置固定；
 搜索设置由当前 `esmfold2_d` 配置提供。热点按案例中的 IFNAR2 输入序列编号。
 结果位于 `outputs/vhh_ifnar2/IFNAR2/`。

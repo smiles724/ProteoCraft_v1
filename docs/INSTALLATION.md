@@ -49,9 +49,9 @@ not install every optional Biohub SDK feature. In particular, external ESM
 metadata declares DockQ and CUDA-13 cuEquivariance dependencies that this pinned
 adapter environment does not install. `pip check` therefore reports these
 missing SDK dependencies; this is a known limitation of the inherited stack.
-The adapter does not use those SDK paths. The mainline was exercised on H200
-using the existing pinned environment and cached models; a fresh installer run
-was not part of that validation.
+The adapter uses the selected ESMFold2 and ESMC APIs. A clean Linux installation,
+all three model downloads and the Bet v 1 GPU smoke test have been validated.
+See the [validation summary](MIGRATION.md#validation-scope) for tested workflows.
 
 For a full 110-round IFNAR2 VHH run (128-residue binder, 37 mutable residues),
 resident mode peaked at approximately **73.15 GiB allocated / 78.18 GiB reserved**

@@ -65,10 +65,6 @@ The structure models stay frozen; the search changes the binder sequence.
 
 *Method overview from the ESMFold2 manuscript.*
 
-<!-- Figure provenance: authors' ESMFold2 overview, 2026-09-26.
-Source PDF SHA-256: d68a709bdadb14b5887d002e9e0064511e5b3ca1fd0a3202c16efeb0cf802aef.
--->
-
 The bundled `esmfold2_d` profile supplies the search settings automatically:
 
 | Setting | Default |
@@ -88,11 +84,6 @@ selection and handoff rules.
 <a href="docs/assets/search-replay-1080p.mp4?raw=true"><img src="docs/assets/search-replay-hd.gif" width="960" alt="Archived Bet v 1 search replay: the predicted complex changes as the two-stage search tree expands."></a>
 
 *Archived Bet v 1 ESMFold2 search. Left: predicted complex. Right: search tree.*
-
-<!-- Replay provenance: betv1-two-stage-seed43 from the 2026-10-18 animation kit.
-110 video frames cover the original 110-step search; playback is 27.5 s.
-The GIF retains the original width and crops to the structure/tree panels.
-The MP4 is the original unmodified four-panel recording. -->
 
 ## Install
 
@@ -213,8 +204,8 @@ python -m build
 The CPU suite tests search contracts, task masks, configuration, checkpoints
 and installation helpers with small tensors and test backends. GitHub Actions
 runs the suite, package builds and installed-wheel checks. The
-[validation record](docs/MIGRATION.md#validation-scope) documents the H200 IFNAR2
-VHH runs, tested code versions and reproducibility findings.
+[validation record](docs/MIGRATION.md#validation-scope) covers the full IFNAR2 VHH
+search, clean installation, model downloads and GPU smoke test.
 
 ## License and attribution
 

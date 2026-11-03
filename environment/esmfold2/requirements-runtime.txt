@@ -1,4 +1,4 @@
-# Direct runtime dependencies verified on the 15122 and 15322 H200 nodes.
+# Pinned runtime dependencies for the stock ESMFold2 environment.
 # Biohub ESM and Transformers are pinned separately in requirements-biohub.txt.
 torch==2.7.1
 triton==3.3.1

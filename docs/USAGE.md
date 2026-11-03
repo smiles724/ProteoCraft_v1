@@ -114,7 +114,7 @@ python benchmark/script/run_esmfold2_vhh_redesign.py \
   --config benchmark/yaml/vhh/esmfold2_vhh_ifnar2_example.yaml --device cuda:0
 ```
 
-It uses the 217-residue IFNAR2 input from the cleanup regression and a
+It uses a 217-residue IFNAR2 target sequence and a
 128-residue starting VHH from 7EOW chain B. All 37 CDR positions are mutable;
 the remaining 91 positions stay fixed. The current `esmfold2_d` profile supplies
 the search settings. Hotspots refer to positions in this case's IFNAR2 sequence.
