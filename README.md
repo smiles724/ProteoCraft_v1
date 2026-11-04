@@ -214,3 +214,19 @@ This is the ESMFold2-only distribution of
 
 Software: [Apache 2.0](LICENSE). Original notices are retained in [NOTICE](NOTICE).
 External model weights and optimization sources retain their own licenses.
+
+##
+
+If you find this repo and study helpful, please consider citing our paper! Any questions or collaboration requests can be sent to [fangwu97@stanford.edu]~
+
+```
+@article{wu2026proteocraft,
+  title={ProteoCraft: Protein Design as Proposal-Verification Search},
+  author={Wu, Fang and Lin, Hongbin and Duan, Bingchen and Wang, Yuchen and Li, Erran and Huang, Yanjie and Cao, Mingxuan and Ma, Yijun and Mo, Yunxiang and Li, Yanchao and Pang, Kuan and Xu, Juangui and Cao, Hanqun and Jiang, Dongwei and Xu, Xinyue and Tang, Xiangru and Wang, Zehong and Ma, Jian and Ying, Kejun and Li, Guanlue and Cao, Mingran and Wang, Fanjin and Fu, Tianfan and Zheng, Shuangjia and Shu, Yao and Leskovec, Jure and Choi, Yejin},
+  journal={arXiv preprint arXiv:2611.03963},
+  year={2026},
+  doi={10.48550/arXiv.2611.03963},
+  url={https://arxiv.org/abs/2611.03963}
+}
+```
+
