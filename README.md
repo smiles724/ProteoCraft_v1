@@ -9,6 +9,16 @@ provides the ESMFold2 mainline.
 
 [Paper (PDF)](docs/ProteoCraft.pdf) · [Quickstart](#quickstart) · [Installation](#install) · [Task examples](docs/USAGE.md)
 
+### PD-L1 miniprotein search
+
+https://github.com/user-attachments/assets/4dc09490-2c0f-4b6a-9f7d-2e134a449334
+
+### IFNAR2 VHH search
+
+https://github.com/user-attachments/assets/de7e0b88-d77d-4ac9-82a6-7e5dd1ffbf8f
+
+
+
 ## Quickstart
 
 Complete the [installation and model setup](#install), then run a short test
