@@ -9,13 +9,6 @@ provides the ESMFold2 mainline.
 
 [Paper (PDF)](docs/ProteoCraft.pdf) · [Quickstart](#quickstart) · [Installation](#install) · [Task examples](docs/USAGE.md)
 
-### PD-L1 miniprotein search
-
-https://github.com/user-attachments/assets/4dc09490-2c0f-4b6a-9f7d-2e134a449334
-
-### IFNAR2 VHH search
-
-https://github.com/user-attachments/assets/de7e0b88-d77d-4ac9-82a6-7e5dd1ffbf8f
 
 
 
@@ -90,6 +83,17 @@ See the [core algorithm](docs/ALGORITHM.md) for loss functions, candidate
 selection and handoff rules.
 
 ## Search in action
+
+
+### PD-L1 miniprotein search
+
+<img width="960" height="600" alt="PDL1_miniprotein_search_5x" src="https://github.com/user-attachments/assets/106d5bbb-9e15-47d3-8a6c-7778efc2a3d6" />
+
+### IFNAR2 VHH search
+
+<img width="960" height="600" alt="IFNAR2_VHH_search_5x" src="https://github.com/user-attachments/assets/f883863d-f2c3-46c0-aa91-33623a69698a" />
+
+### Bet v 1 miniprotein search
 
 <a href="docs/assets/search-replay-1080p.mp4?raw=true"><img src="docs/assets/search-replay-hd.gif" width="960" alt="Archived Bet v 1 search replay: the predicted complex changes as the two-stage search tree expands."></a>
 
